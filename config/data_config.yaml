@@ -1,0 +1,40 @@
+# Binance API settings
+binance:
+  base_url: "https://api.binance.com"
+  rate_limit: 1200  # requests per minute
+  concurrency: 10   # concurrent async requests
+  kline_limit: 1000 # max candles per request
+
+# Universe settings
+universe:
+  quote_asset: "USDT"
+  min_24h_volume_usd: 1_000_000
+  min_listing_months: 6
+  max_symbols: 500
+  exclude_stablecoins:
+    - USDT
+    - USDC
+    - DAI
+    - BUSD
+    - TUSD
+    - FDUSD
+  exclude_leveraged_tokens: true  # filter out *UP, *DOWN, *BULL, *BEAR
+
+# Data settings
+data:
+  interval: "1h"
+  lookback_years: 2
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  alphagen_format_dir: "data/alphagen_format"
+
+# Train/Val/Test split (chronological)
+split:
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+# Forward return horizons
+returns:
+  - 1   # 1H forward return
+  - 4   # 4H forward return

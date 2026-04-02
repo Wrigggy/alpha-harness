@@ -1,0 +1,29 @@
+# Core
+torch
+torchvision
+numpy
+pandas
+polars
+pyarrow
+
+# Binance API
+python-binance
+aiohttp
+
+# Config & Logging
+pyyaml
+tqdm
+loguru
+
+# Qlib (AlphaGen dependency)
+qlib
+
+# Evaluation & Backtest
+alphalens-reloaded
+empyrical
+matplotlib
+seaborn
+
+# Jupyter
+jupyter
+ipykernel
