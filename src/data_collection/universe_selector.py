@@ -26,7 +26,7 @@ async def select_universe(config_path: str = "config/data_config.yaml") -> list[
 
     Returns a list of symbol dicts sorted by 24h quote volume descending.
     """
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     uni_cfg = cfg["universe"]

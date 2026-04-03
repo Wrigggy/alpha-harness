@@ -117,7 +117,7 @@ async def download_universe_funding(
     symbols: list[str],
     config_path: str = "config/data_config.yaml",
 ):
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     raw_dir = cfg["data"]["raw_dir"]

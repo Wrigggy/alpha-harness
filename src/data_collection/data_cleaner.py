@@ -157,7 +157,7 @@ def load_panel(processed_dir: str) -> dict[str, pd.DataFrame]:
 
 def run_cleaning(config_path: str = "config/data_config.yaml"):
     """Full cleaning pipeline: load raw -> clean -> build panel -> save."""
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     raw_dir = cfg["data"]["raw_dir"]

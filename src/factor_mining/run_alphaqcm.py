@@ -60,7 +60,7 @@ from src.utils.device import get_device
 
 
 def load_config(path: str = "config/alphaqcm_config.yaml") -> dict:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -79,7 +79,7 @@ def run_alphaqcm(
 
     # Load QCM agent config
     qcm_config_path = _ROOT / "external" / "alphaqcm" / "qcm_config" / f"{model_type}.yaml"
-    with open(qcm_config_path) as f:
+    with open(qcm_config_path, encoding="utf-8") as f:
         agent_config = yaml.safe_load(f)
 
     # Override num_steps from our config to match AlphaGen for fair comparison
@@ -91,7 +91,7 @@ def run_alphaqcm(
         logger.info(f"Small-scale mode: {agent_config['num_steps']} steps")
 
     # Load data
-    with open(data_config_path) as f:
+    with open(data_config_path, encoding="utf-8") as f:
         data_cfg = yaml.safe_load(f)
     processed_dir = data_cfg["data"]["processed_dir"]
 

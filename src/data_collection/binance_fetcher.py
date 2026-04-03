@@ -118,7 +118,7 @@ async def download_universe(
     config_path: str = "config/data_config.yaml",
 ):
     """Download OHLCV data for all symbols from data.binance.vision."""
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     interval = cfg["data"]["interval"]

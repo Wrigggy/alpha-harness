@@ -353,7 +353,7 @@ def create_data_splits(
     max_future_days: int = 30,
 ) -> dict:
     """Create train/val/test CryptoStockData splits."""
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     split_cfg = cfg["split"]

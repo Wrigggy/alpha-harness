@@ -106,7 +106,7 @@ class AlphaGenCallback(BaseCallback):
 
 
 def load_config(path: str = "config/alphagen_config.yaml") -> dict:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -126,7 +126,7 @@ def run_alphagen(
         n_steps = cfg["n_episodes"]
 
     # Load data splits
-    with open(data_config_path) as f:
+    with open(data_config_path, encoding="utf-8") as f:
         data_cfg = yaml.safe_load(f)
     processed_dir = data_cfg["data"]["processed_dir"]
 
