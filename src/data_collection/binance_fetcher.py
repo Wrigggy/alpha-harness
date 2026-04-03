@@ -70,6 +70,9 @@ async def download_month(
         logger.debug(f"{symbol} {year_month}: extract failed - {e}")
         return None
 
+    # Some CSV files include a header row — drop rows where 'open' is not numeric
+    df = df[pd.to_numeric(df["open"], errors="coerce").notna()].reset_index(drop=True)
+
     # Keep only columns we need
     df = df[["open_time", "open", "high", "low", "close", "volume", "quote_volume", "trades"]]
     df = df.rename(columns={"open_time": "timestamp"})
