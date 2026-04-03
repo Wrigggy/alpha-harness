@@ -40,7 +40,7 @@ constants:
 max_expression_length: 20
 
 # RL training
-n_episodes: 200000       # 200k timesteps (~40 min on CUDA)
+n_episodes: 300000       # 300k timesteps (~60 min on CUDA)
 n_steps: 128             # Rollout buffer size per update (larger = more stable value estimates)
 batch_size: 128
 learning_rate: 1.0e-4
