@@ -1,36 +1,108 @@
 """Launch AlphaGen (Maskable PPO) training with crypto data.
 
+Includes AlphaGen's CustomCallback for tensorboard logging of:
+- pool/size, pool/best_ic_ret, pool/eval_cnt
+- test/ic, test/rank_ic on validation and test sets
+- Model checkpoints saved every rollout
+
 Usage:
     python -m src.factor_mining.run_alphagen --small-scale
-    python -m src.factor_mining.run_alphagen  # full training
+    python -m src.factor_mining.run_alphagen
 """
 
+import os
 import sys
 import json
 from pathlib import Path
 from datetime import datetime
+from typing import List
 
+import numpy as np
 import torch
 import yaml
 from loguru import logger
+from stable_baselines3.common.callbacks import BaseCallback
 
 # External repos
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "external" / "alphagen"))
 
 from alphagen.data.expression import Feature, FeatureType, Ref
-from alphagen.models.linear_alpha_pool import MseAlphaPool
+from alphagen.models.linear_alpha_pool import MseAlphaPool, LinearAlphaPool
 from alphagen.rl.env.wrapper import AlphaEnv
+from alphagen.rl.env.core import AlphaEnvCore
 from alphagen.rl.policy import LSTMSharedNet
 
 from sb3_contrib import MaskablePPO
 
 from src.data_adapter.to_alphagen_format import (
-    load_crypto_stock_data,
     CryptoAlphaCalculator,
     create_data_splits,
 )
 from src.utils.device import get_device
+
+
+class AlphaGenCallback(BaseCallback):
+    """Callback that logs pool metrics to tensorboard and saves checkpoints.
+
+    Adapted from AlphaGen's original CustomCallback in scripts/rl.py.
+    Logs at every rollout end:
+    - pool/size: number of factors in the pool
+    - pool/significant: factors with |weight| > 1e-4
+    - pool/best_ic_ret: best ensemble IC on training data
+    - pool/eval_cnt: total expression evaluations
+    - test/ic_N, test/rank_ic_N: IC on each test calculator
+    - test/ic_mean, test/rank_ic_mean: weighted average test IC
+    """
+
+    def __init__(
+        self,
+        save_path: str,
+        test_calculators: List[CryptoAlphaCalculator],
+        verbose: int = 0,
+    ):
+        super().__init__(verbose)
+        self.save_path = save_path
+        self.test_calculators = test_calculators
+        os.makedirs(self.save_path, exist_ok=True)
+
+    @property
+    def pool(self) -> LinearAlphaPool:
+        return self.training_env.envs[0].unwrapped.pool
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        pool = self.pool
+
+        # Pool state metrics
+        self.logger.record("pool/size", pool.size)
+        self.logger.record("pool/significant", int((np.abs(pool.weights[:pool.size]) > 1e-4).sum()))
+        self.logger.record("pool/best_ic_ret", pool.best_ic_ret)
+        self.logger.record("pool/eval_cnt", pool.eval_cnt)
+
+        # Test metrics on validation/test calculators
+        n_days_total = sum(calc.n_days for calc in self.test_calculators)
+        ic_mean, ric_mean = 0.0, 0.0
+        for i, calc in enumerate(self.test_calculators, start=1):
+            ic, ric = pool.test_ensemble(calc)
+            weight = calc.n_days / n_days_total
+            ic_mean += ic * weight
+            ric_mean += ric * weight
+            self.logger.record(f"test/ic_{i}", ic)
+            self.logger.record(f"test/rank_ic_{i}", ric)
+        self.logger.record("test/ic_mean", ic_mean)
+        self.logger.record("test/rank_ic_mean", ric_mean)
+
+        # Save checkpoint
+        self._save_checkpoint()
+
+    def _save_checkpoint(self):
+        path = os.path.join(self.save_path, f"{self.num_timesteps}_steps")
+        self.model.save(path)
+        with open(f"{path}_pool.json", "w") as f:
+            json.dump(self.pool.to_json_dict(), f)
 
 
 def load_config(path: str = "config/alphagen_config.yaml") -> dict:
@@ -87,6 +159,18 @@ def run_alphagen(
     # Create RL environment
     env = AlphaEnv(pool=pool, device=device, print_expr=True)
 
+    # Output paths
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_path = str(_ROOT / "out" / "results" / f"alphagen_{timestamp}")
+    tb_log_dir = str(_ROOT / "out" / "tensorboard")
+
+    # Callback for tensorboard logging and checkpoints
+    callback = AlphaGenCallback(
+        save_path=save_path,
+        test_calculators=[valid_calc, test_calc],
+        verbose=1,
+    )
+
     # Create PPO agent with LSTM feature extractor
     model = MaskablePPO(
         "MlpPolicy",
@@ -107,22 +191,28 @@ def run_alphagen(
         ent_coef=cfg["entropy_coef"],
         verbose=1,
         device=device,
-        tensorboard_log="./out/tensorboard",
+        tensorboard_log=tb_log_dir,
     )
 
     logger.info(f"Starting AlphaGen PPO: {n_steps} timesteps on {device}")
     logger.info(f"Train: {data_train.n_days} bars x {data_train.n_stocks} symbols")
+    logger.info(f"Tensorboard: {tb_log_dir}")
+    logger.info(f"Checkpoints: {save_path}")
 
-    # Train
-    model.learn(total_timesteps=n_steps)
+    # Train with callback
+    model.learn(
+        total_timesteps=n_steps,
+        callback=callback,
+        tb_log_name=f"alphagen_{timestamp}",
+    )
 
-    # Evaluate on validation and test sets
+    # Final evaluation
     val_ic, val_ric = pool.test_ensemble(valid_calc)
     test_ic, test_ric = pool.test_ensemble(test_calc)
     logger.info(f"Validation IC={val_ic:.4f}, RankIC={val_ric:.4f}")
     logger.info(f"Test IC={test_ic:.4f}, RankIC={test_ric:.4f}")
 
-    # Save results
+    # Save final results
     output_dir = Path("data/factors")
     output_dir.mkdir(parents=True, exist_ok=True)
 
