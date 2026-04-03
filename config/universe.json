@@ -1,0 +1,306 @@
+{
+  "date": "2026-04-03",
+  "count": 50,
+  "symbols": [
+    {
+      "symbol": "BTCUSDT",
+      "base": "BTC",
+      "quote": "USDT",
+      "quote_volume_24h": 1157876914.8682473
+    },
+    {
+      "symbol": "ETHUSDT",
+      "base": "ETH",
+      "quote": "USDT",
+      "quote_volume_24h": 518029092.472789
+    },
+    {
+      "symbol": "STOUSDT",
+      "base": "STO",
+      "quote": "USDT",
+      "quote_volume_24h": 293002336.15389
+    },
+    {
+      "symbol": "SOLUSDT",
+      "base": "SOL",
+      "quote": "USDT",
+      "quote_volume_24h": 239273220.86196
+    },
+    {
+      "symbol": "NIGHTUSDT",
+      "base": "NIGHT",
+      "quote": "USDT",
+      "quote_volume_24h": 159593422.9017
+    },
+    {
+      "symbol": "XRPUSDT",
+      "base": "XRP",
+      "quote": "USDT",
+      "quote_volume_24h": 149095407.26115
+    },
+    {
+      "symbol": "BNBUSDT",
+      "base": "BNB",
+      "quote": "USDT",
+      "quote_volume_24h": 136448630.63299
+    },
+    {
+      "symbol": "KATUSDT",
+      "base": "KAT",
+      "quote": "USDT",
+      "quote_volume_24h": 117351510.43971
+    },
+    {
+      "symbol": "USD1USDT",
+      "base": "USD1",
+      "quote": "USDT",
+      "quote_volume_24h": 99421727.0664
+    },
+    {
+      "symbol": "NOMUSDT",
+      "base": "NOM",
+      "quote": "USDT",
+      "quote_volume_24h": 60670500.26634
+    },
+    {
+      "symbol": "XPLUSDT",
+      "base": "XPL",
+      "quote": "USDT",
+      "quote_volume_24h": 59680702.48448
+    },
+    {
+      "symbol": "SOLVUSDT",
+      "base": "SOLV",
+      "quote": "USDT",
+      "quote_volume_24h": 57122524.53539
+    },
+    {
+      "symbol": "TAOUSDT",
+      "base": "TAO",
+      "quote": "USDT",
+      "quote_volume_24h": 47772876.6934
+    },
+    {
+      "symbol": "UNIUSDT",
+      "base": "UNI",
+      "quote": "USDT",
+      "quote_volume_24h": 44880804.73027
+    },
+    {
+      "symbol": "ZECUSDT",
+      "base": "ZEC",
+      "quote": "USDT",
+      "quote_volume_24h": 44583713.5448
+    },
+    {
+      "symbol": "PAXGUSDT",
+      "base": "PAXG",
+      "quote": "USDT",
+      "quote_volume_24h": 44079956.109473
+    },
+    {
+      "symbol": "DOGEUSDT",
+      "base": "DOGE",
+      "quote": "USDT",
+      "quote_volume_24h": 38453235.66393
+    },
+    {
+      "symbol": "EURUSDT",
+      "base": "EUR",
+      "quote": "USDT",
+      "quote_volume_24h": 33274364.54813
+    },
+    {
+      "symbol": "RLUSDUSDT",
+      "base": "RLUSD",
+      "quote": "USDT",
+      "quote_volume_24h": 30796580.5537
+    },
+    {
+      "symbol": "ADAUSDT",
+      "base": "ADA",
+      "quote": "USDT",
+      "quote_volume_24h": 30297086.85488
+    },
+    {
+      "symbol": "CTSIUSDT",
+      "base": "CTSI",
+      "quote": "USDT",
+      "quote_volume_24h": 29213262.42144
+    },
+    {
+      "symbol": "TRXUSDT",
+      "base": "TRX",
+      "quote": "USDT",
+      "quote_volume_24h": 28012932.94663
+    },
+    {
+      "symbol": "FIDAUSDT",
+      "base": "FIDA",
+      "quote": "USDT",
+      "quote_volume_24h": 25253295.765255
+    },
+    {
+      "symbol": "PEPEUSDT",
+      "base": "PEPE",
+      "quote": "USDT",
+      "quote_volume_24h": 22700364.16959254
+    },
+    {
+      "symbol": "ONTUSDT",
+      "base": "ONT",
+      "quote": "USDT",
+      "quote_volume_24h": 22434047.97607
+    },
+    {
+      "symbol": "XAUTUSDT",
+      "base": "XAUT",
+      "quote": "USDT",
+      "quote_volume_24h": 20829804.432485
+    },
+    {
+      "symbol": "LINKUSDT",
+      "base": "LINK",
+      "quote": "USDT",
+      "quote_volume_24h": 20755129.5326
+    },
+    {
+      "symbol": "HEMIUSDT",
+      "base": "HEMI",
+      "quote": "USDT",
+      "quote_volume_24h": 18989669.577754
+    },
+    {
+      "symbol": "SUIUSDT",
+      "base": "SUI",
+      "quote": "USDT",
+      "quote_volume_24h": 17814117.26493
+    },
+    {
+      "symbol": "ENAUSDT",
+      "base": "ENA",
+      "quote": "USDT",
+      "quote_volume_24h": 17324922.753157
+    },
+    {
+      "symbol": "ALGOUSDT",
+      "base": "ALGO",
+      "quote": "USDT",
+      "quote_volume_24h": 15816885.7383
+    },
+    {
+      "symbol": "AVAXUSDT",
+      "base": "AVAX",
+      "quote": "USDT",
+      "quote_volume_24h": 15670801.9473
+    },
+    {
+      "symbol": "LTCUSDT",
+      "base": "LTC",
+      "quote": "USDT",
+      "quote_volume_24h": 14248609.27057
+    },
+    {
+      "symbol": "DUSDT",
+      "base": "D",
+      "quote": "USDT",
+      "quote_volume_24h": 13789869.78988
+    },
+    {
+      "symbol": "FETUSDT",
+      "base": "FET",
+      "quote": "USDT",
+      "quote_volume_24h": 12175610.51049
+    },
+    {
+      "symbol": "UUSDT",
+      "base": "U",
+      "quote": "USDT",
+      "quote_volume_24h": 12101272.7591
+    },
+    {
+      "symbol": "RENDERUSDT",
+      "base": "RENDER",
+      "quote": "USDT",
+      "quote_volume_24h": 12060849.70926
+    },
+    {
+      "symbol": "NMRUSDT",
+      "base": "NMR",
+      "quote": "USDT",
+      "quote_volume_24h": 11468904.8206
+    },
+    {
+      "symbol": "KITEUSDT",
+      "base": "KITE",
+      "quote": "USDT",
+      "quote_volume_24h": 9366805.69099
+    },
+    {
+      "symbol": "ASTERUSDT",
+      "base": "ASTER",
+      "quote": "USDT",
+      "quote_volume_24h": 8958072.33657
+    },
+    {
+      "symbol": "ZBTUSDT",
+      "base": "ZBT",
+      "quote": "USDT",
+      "quote_volume_24h": 8701249.92611
+    },
+    {
+      "symbol": "NEARUSDT",
+      "base": "NEAR",
+      "quote": "USDT",
+      "quote_volume_24h": 8535927.3103
+    },
+    {
+      "symbol": "YBUSDT",
+      "base": "YB",
+      "quote": "USDT",
+      "quote_volume_24h": 6851861.36355
+    },
+    {
+      "symbol": "KERNELUSDT",
+      "base": "KERNEL",
+      "quote": "USDT",
+      "quote_volume_24h": 6711449.03921
+    },
+    {
+      "symbol": "RESOLVUSDT",
+      "base": "RESOLV",
+      "quote": "USDT",
+      "quote_volume_24h": 6697611.05559
+    },
+    {
+      "symbol": "REZUSDT",
+      "base": "REZ",
+      "quote": "USDT",
+      "quote_volume_24h": 6547620.674692
+    },
+    {
+      "symbol": "TONUSDT",
+      "base": "TON",
+      "quote": "USDT",
+      "quote_volume_24h": 6504163.91851
+    },
+    {
+      "symbol": "DOLOUSDT",
+      "base": "DOLO",
+      "quote": "USDT",
+      "quote_volume_24h": 6482330.699421
+    },
+    {
+      "symbol": "PENGUUSDT",
+      "base": "PENGU",
+      "quote": "USDT",
+      "quote_volume_24h": 6472198.855613
+    },
+    {
+      "symbol": "SIGNUSDT",
+      "base": "SIGN",
+      "quote": "USDT",
+      "quote_volume_24h": 6442994.41629
+    }
+  ]
+}

@@ -1,213 +1,321 @@
 """Convert Binance crypto data into AlphaGen/AlphaQCM tensor format.
 
-This module provides CryptoStockData and CryptoAlphaCalculator as drop-in
-replacements for AlphaGen's Qlib-based data loading.
+Provides CryptoStockData as a drop-in replacement for AlphaGen's
+qlib-based StockData. The Expression tree system evaluates directly
+against CryptoStockData.data with shape (total_bars, n_features, n_stocks).
+
+Path management:
+    The caller (run_alphagen.py or run_alphaqcm.py) is responsible for
+    adding the correct external repo to sys.path BEFORE importing this
+    module. This avoids conflicts between the upstream AlphaGen and
+    AlphaQCM's fork.
 """
 
+import sys
 from pathlib import Path
+from typing import Optional, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import torch
 import yaml
 from loguru import logger
-from scipy.stats import pearsonr, spearmanr
 
 from src.data_adapter.feature_engineering import compute_normalized_features
 from src.data_collection.data_cleaner import load_panel
 
 
+def _ensure_alphagen_path():
+    """Add external/alphagen to path if alphagen isn't already importable."""
+    try:
+        import alphagen  # noqa: F401
+    except ImportError:
+        p = str(Path(__file__).resolve().parents[2] / "external" / "alphagen")
+        sys.path.insert(0, p)
+
+
+_ensure_alphagen_path()
+
+from alphagen_qlib.stock_data import FeatureType
+from alphagen.data.expression import Expression
+from alphagen.utils.pytorch_utils import normalize_by_day
+from alphagen.utils.correlation import batch_pearsonr, batch_spearmanr
+
+
 class CryptoStockData:
     """Drop-in replacement for AlphaGen's StockData.
 
-    Loads Binance crypto data and exposes the same interface expected by
-    AlphaGen's expression calculator and RL environment.
+    Loads Binance crypto panel data and exposes the same interface
+    that Expression.evaluate(data) expects.
 
-    Attributes:
-        data: Tensor of shape (n_timestamps, n_symbols, n_features)
-            Features are [open, close, high, low, volume, vwap] (all normalized).
-        returns: Tensor of shape (n_timestamps, n_symbols) — forward 1H returns.
+    Data tensor shape: (total_bars, n_features, n_stocks)
+    where total_bars = max_backtrack_days + n_days + max_future_days
+
+    Feature order follows FeatureType enum:
+        0=OPEN, 1=CLOSE, 2=HIGH, 3=LOW, 4=VOLUME, 5=VWAP
     """
-
-    FEATURE_NAMES = ["open", "close", "high", "low", "volume", "vwap"]
 
     def __init__(
         self,
-        processed_dir: str,
-        start_date: str | None = None,
-        end_date: str | None = None,
-        device: str = "cpu",
+        instrument: Union[str, List[str]] = "all",
+        start_time: str = "",
+        end_time: str = "",
+        max_backtrack_days: int = 100,
+        max_future_days: int = 30,
+        features: Optional[List[FeatureType]] = None,
+        device: torch.device = torch.device("cpu"),
+        preloaded_data: Optional[Tuple[torch.Tensor, pd.Index, pd.Index]] = None,
     ):
-        # Load panel data
-        panel = load_panel(processed_dir)
+        self._instrument = instrument
+        self.max_backtrack_days = max_backtrack_days
+        self.max_future_days = max_future_days
+        self._start_time = start_time
+        self._end_time = end_time
+        self._features = features if features is not None else list(FeatureType)
+        self.device = device
 
-        # Compute normalized features
-        features = compute_normalized_features(panel)
+        if preloaded_data is not None:
+            self.data, self._dates, self._stock_ids = preloaded_data
+        else:
+            raise ValueError("Use load_crypto_stock_data() factory function")
 
-        # Apply date filter
-        index = panel["close"].index
-        if start_date:
-            index = index[index >= pd.Timestamp(start_date, tz="UTC")]
-        if end_date:
-            index = index[index <= pd.Timestamp(end_date, tz="UTC")]
-
-        self._timestamps = index
-        self._symbols = list(panel["close"].columns)
-
-        # Stack features into tensor: (n_timestamps, n_symbols, n_features)
-        feature_arrays = []
-        for fname in self.FEATURE_NAMES:
-            arr = features[fname].loc[index].values.astype(np.float32)
-            feature_arrays.append(arr)
-
-        # shape: (n_features, n_timestamps, n_symbols) -> (n_timestamps, n_symbols, n_features)
-        stacked = np.stack(feature_arrays, axis=-1)
-
-        # Replace NaN with 0 for tensor computation
-        stacked = np.nan_to_num(stacked, nan=0.0)
-
-        self.data = torch.tensor(stacked, dtype=torch.float32, device=device)
-
-        # Forward returns
-        ret = panel["ret_1h"].loc[index].values.astype(np.float32)
-        ret = np.nan_to_num(ret, nan=0.0)
-        self.returns = torch.tensor(ret, dtype=torch.float32, device=device)
-
-        logger.info(
-            f"CryptoStockData loaded: {self.n_days} bars x {self.n_stocks} symbols x {len(self.FEATURE_NAMES)} features"
+    def __getitem__(self, slc: slice) -> "CryptoStockData":
+        """Get a subview of the data given a date slice or an index slice."""
+        if slc.step is not None:
+            raise ValueError("Only support slice with step=None")
+        if isinstance(slc.start, str):
+            return self[self.find_date_slice(slc.start, slc.stop)]
+        start, stop = slc.start, slc.stop
+        start = start if start is not None else 0
+        stop = (stop if stop is not None else self.n_days) + self.max_future_days + self.max_backtrack_days
+        start = max(0, start)
+        stop = min(self.data.shape[0], stop)
+        idx_range = slice(start, stop)
+        data = self.data[idx_range]
+        remaining = data.isnan().reshape(-1, data.shape[-1]).all(dim=0).logical_not().nonzero().flatten()
+        data = data[:, :, remaining]
+        return CryptoStockData(
+            instrument=self._instrument,
+            start_time=self._dates[start + self.max_backtrack_days].strftime("%Y-%m-%d %H:%M"),
+            end_time=self._dates[stop - 1 - self.max_future_days].strftime("%Y-%m-%d %H:%M"),
+            max_backtrack_days=self.max_backtrack_days,
+            max_future_days=self.max_future_days,
+            features=self._features,
+            device=self.device,
+            preloaded_data=(data, self._dates[idx_range], self._stock_ids[remaining.tolist()]),
         )
+
+    def find_date_index(self, date: str, exclusive: bool = False) -> int:
+        ts = pd.Timestamp(date)
+        idx: int = self._dates.searchsorted(ts)
+        if exclusive and idx < len(self._dates) and self._dates[idx] == ts:
+            idx += 1
+        idx -= self.max_backtrack_days
+        if idx < 0 or idx > self.n_days:
+            raise ValueError(f"Date {date} is out of range: [{self._start_time}, {self._end_time}]")
+        return idx
+
+    def find_date_slice(self, start_time: Optional[str] = None, end_time: Optional[str] = None) -> slice:
+        start = None if start_time is None else self.find_date_index(start_time)
+        stop = None if end_time is None else self.find_date_index(end_time, exclusive=False)
+        return slice(start, stop)
+
+    @property
+    def n_features(self) -> int:
+        return len(self._features)
 
     @property
     def n_stocks(self) -> int:
-        return self.data.shape[1]
+        return self.data.shape[-1]
 
     @property
     def n_days(self) -> int:
-        """Number of time bars (1H bars, not actual days)."""
-        return self.data.shape[0]
+        return self.data.shape[0] - self.max_backtrack_days - self.max_future_days
 
     @property
-    def timestamps(self) -> pd.DatetimeIndex:
-        return self._timestamps
+    def stock_ids(self) -> pd.Index:
+        return self._stock_ids
 
-    @property
-    def symbols(self) -> list[str]:
-        return self._symbols
+    def make_dataframe(
+        self,
+        data: Union[torch.Tensor, List[torch.Tensor]],
+        columns: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        if isinstance(data, list):
+            data = torch.stack(data, dim=2)
+        if len(data.shape) == 2:
+            data = data.unsqueeze(2)
+        if columns is None:
+            columns = [str(i) for i in range(data.shape[2])]
+        n_days, n_stocks, n_columns = data.shape
+        if self.max_future_days == 0:
+            date_index = self._dates[self.max_backtrack_days:]
+        else:
+            date_index = self._dates[self.max_backtrack_days:-self.max_future_days]
+        index = pd.MultiIndex.from_product([date_index, self._stock_ids])
+        data = data.reshape(-1, n_columns)
+        return pd.DataFrame(data.detach().cpu().numpy(), index=index, columns=columns)
 
-    def make_dataframe(self, alpha_tensor: torch.Tensor) -> pd.DataFrame:
-        """Convert an alpha values tensor to a labeled DataFrame.
 
-        Args:
-            alpha_tensor: shape (n_timestamps, n_symbols)
+def load_crypto_stock_data(
+    processed_dir: str,
+    start_time: str,
+    end_time: str,
+    max_backtrack_days: int = 100,
+    max_future_days: int = 30,
+    device: torch.device = torch.device("cpu"),
+) -> CryptoStockData:
+    """Factory: load crypto data into CryptoStockData."""
+    panel = load_panel(processed_dir)
+    features = compute_normalized_features(panel)
 
-        Returns:
-            DataFrame with DatetimeIndex and symbol columns.
-        """
-        values = alpha_tensor.detach().cpu().numpy()
-        return pd.DataFrame(values, index=self._timestamps, columns=self._symbols)
+    full_index = panel["close"].index
+    start_ts = pd.Timestamp(start_time, tz="UTC") if full_index.tz else pd.Timestamp(start_time)
+    end_ts = pd.Timestamp(end_time, tz="UTC") if full_index.tz else pd.Timestamp(end_time)
+
+    core_mask = (full_index >= start_ts) & (full_index <= end_ts)
+    core_positions = np.where(core_mask)[0]
+    if len(core_positions) == 0:
+        raise ValueError(f"No data between {start_time} and {end_time}")
+
+    core_start = core_positions[0]
+    core_end = core_positions[-1]
+
+    buf_start = max(0, core_start - max_backtrack_days)
+    buf_end = min(len(full_index) - 1, core_end + max_future_days)
+
+    actual_backtrack = core_start - buf_start
+    actual_future = buf_end - core_end
+
+    selected_index = full_index[buf_start:buf_end + 1]
+    symbols = list(panel["close"].columns)
+
+    # Build tensor: (total_bars, n_features, n_stocks)
+    feature_order = ["open", "close", "high", "low", "volume", "vwap"]
+    arrays = []
+    for fname in feature_order:
+        arrays.append(features[fname].loc[selected_index].values.astype(np.float32))
+
+    stacked = np.stack(arrays, axis=0)           # (6, total_bars, n_stocks)
+    stacked = np.transpose(stacked, (1, 0, 2))   # (total_bars, 6, n_stocks)
+    stacked = np.nan_to_num(stacked, nan=0.0)
+
+    data_tensor = torch.tensor(stacked, dtype=torch.float32, device=device)
+
+    n_days = len(selected_index) - actual_backtrack - actual_future
+    logger.info(
+        f"CryptoStockData: {n_days} bars x {len(symbols)} symbols x {len(feature_order)} features "
+        f"(backtrack={actual_backtrack}, future={actual_future})"
+    )
+
+    return CryptoStockData(
+        instrument="all",
+        start_time=start_time,
+        end_time=end_time,
+        max_backtrack_days=actual_backtrack,
+        max_future_days=actual_future,
+        features=list(FeatureType),
+        device=device,
+        preloaded_data=(data_tensor, selected_index, pd.Index(symbols)),
+    )
 
 
 class CryptoAlphaCalculator:
-    """Drop-in replacement for AlphaGen's QlibStockDataCalculator.
+    """Calculator compatible with BOTH upstream AlphaGen and AlphaQCM's fork.
 
-    Computes IC, RankIC, and pool-level metrics for factor evaluation.
-    This is what the RL agent uses as its reward signal.
+    Implements the union of methods required by:
+    - alphagen (upstream): TensorAlphaCalculator interface
+    - alphaqcm: simpler AlphaCalculator interface
+    Both call calc_single_IC_ret, calc_mutual_IC, calc_pool_IC_ret, calc_pool_rIC_ret.
+    Upstream additionally calls calc_pool_all_ret, calc_single_rIC_ret, etc.
     """
 
-    def __init__(self, stock_data: CryptoStockData):
-        self.stock_data = stock_data
+    def __init__(self, data: CryptoStockData, target: Optional[Expression] = None):
+        self.data = data
+        if target is not None:
+            self.target_value = normalize_by_day(target.evaluate(data))
+        else:
+            self.target_value = None
 
-    def calc_single_IC(self, alpha: torch.Tensor) -> float:
-        """Compute mean cross-sectional Pearson IC between alpha and forward returns.
+    def _calc_alpha(self, expr: Expression) -> torch.Tensor:
+        return normalize_by_day(expr.evaluate(self.data))
 
-        Args:
-            alpha: Tensor of shape (n_timestamps, n_symbols)
+    # --- Required by both upstream and QCM ---
 
-        Returns:
-            Mean IC across all timestamps.
-        """
-        alpha_np = alpha.detach().cpu().numpy()
-        ret_np = self.stock_data.returns.detach().cpu().numpy()
+    def calc_single_IC_ret(self, expr: Expression) -> float:
+        value = self._calc_alpha(expr)
+        return batch_pearsonr(value, self.target_value).mean().item()
 
-        ics = []
-        for t in range(alpha_np.shape[0]):
-            a = alpha_np[t]
-            r = ret_np[t]
-            # Mask NaN and zero values
-            mask = np.isfinite(a) & np.isfinite(r) & (a != 0)
-            if mask.sum() < 10:
-                continue
-            ic, _ = pearsonr(a[mask], r[mask])
-            if np.isfinite(ic):
-                ics.append(ic)
+    def calc_single_rIC_ret(self, expr: Expression) -> float:
+        value = self._calc_alpha(expr)
+        return batch_spearmanr(value, self.target_value).mean().item()
 
-        return float(np.mean(ics)) if ics else 0.0
+    def calc_single_all_ret(self, expr: Expression) -> Tuple[float, float]:
+        value = self._calc_alpha(expr)
+        ic = batch_pearsonr(value, self.target_value).mean().item()
+        ric = batch_spearmanr(value, self.target_value).mean().item()
+        return ic, ric
 
-    def calc_single_rIC(self, alpha: torch.Tensor) -> float:
-        """Compute mean cross-sectional Spearman Rank IC."""
-        alpha_np = alpha.detach().cpu().numpy()
-        ret_np = self.stock_data.returns.detach().cpu().numpy()
+    def calc_mutual_IC(self, expr1: Expression, expr2: Expression) -> float:
+        v1, v2 = self._calc_alpha(expr1), self._calc_alpha(expr2)
+        return batch_pearsonr(v1, v2).mean().item()
 
-        rics = []
-        for t in range(alpha_np.shape[0]):
-            a = alpha_np[t]
-            r = ret_np[t]
-            mask = np.isfinite(a) & np.isfinite(r) & (a != 0)
-            if mask.sum() < 10:
-                continue
-            ric, _ = spearmanr(a[mask], r[mask])
-            if np.isfinite(ric):
-                rics.append(ric)
+    def make_ensemble_alpha(self, exprs, weights) -> torch.Tensor:
+        factors = [self._calc_alpha(exprs[i]) * weights[i] for i in range(len(exprs))]
+        return torch.sum(torch.stack(factors, dim=0), dim=0)
 
-        return float(np.mean(rics)) if rics else 0.0
+    def calc_pool_IC_ret(self, exprs, weights) -> float:
+        with torch.no_grad():
+            value = self.make_ensemble_alpha(exprs, weights)
+            return batch_pearsonr(value, self.target_value).mean().item()
 
-    def calc_pool_IC(self, pool_alphas: list[torch.Tensor], weights: list[float]) -> float:
-        """Compute IC for a weighted combination of alpha factors.
+    def calc_pool_rIC_ret(self, exprs, weights) -> float:
+        with torch.no_grad():
+            value = self.make_ensemble_alpha(exprs, weights)
+            return batch_spearmanr(value, self.target_value).mean().item()
 
-        Args:
-            pool_alphas: List of alpha tensors, each (n_timestamps, n_symbols).
-            weights: Weights for each alpha in the pool.
+    def calc_pool_all_ret(self, exprs, weights) -> Tuple[float, float]:
+        with torch.no_grad():
+            value = self.make_ensemble_alpha(exprs, weights)
+            ic = batch_pearsonr(value, self.target_value).mean().item()
+            ric = batch_spearmanr(value, self.target_value).mean().item()
+            return ic, ric
 
-        Returns:
-            Mean IC of the combined alpha.
-        """
-        if not pool_alphas:
-            return 0.0
+    def calc_pool_all_ret_with_ir(self, exprs, weights) -> Tuple[float, float, float, float]:
+        with torch.no_grad():
+            value = self.make_ensemble_alpha(exprs, weights)
+            ics = batch_pearsonr(value, self.target_value)
+            rics = batch_spearmanr(value, self.target_value)
+            ic_mean, ic_std = ics.mean().item(), ics.std().item()
+            ric_mean, ric_std = rics.mean().item(), rics.std().item()
+            return ic_mean, ic_mean / ic_std, ric_mean, ric_mean / ric_std
 
-        combined = torch.zeros_like(pool_alphas[0])
-        for alpha, w in zip(pool_alphas, weights):
-            combined += w * alpha
+    # --- Required by upstream's TensorAlphaCalculator interface ---
 
-        return self.calc_single_IC(combined)
+    def evaluate_alpha(self, expr: Expression) -> torch.Tensor:
+        return self._calc_alpha(expr)
 
-    def calc_pool_rIC(self, pool_alphas: list[torch.Tensor], weights: list[float]) -> float:
-        """Compute Rank IC for a weighted combination of alpha factors."""
-        if not pool_alphas:
-            return 0.0
+    @property
+    def target(self) -> torch.Tensor:
+        return self.target_value
 
-        combined = torch.zeros_like(pool_alphas[0])
-        for alpha, w in zip(pool_alphas, weights):
-            combined += w * alpha
-
-        return self.calc_single_rIC(combined)
+    @property
+    def n_days(self) -> int:
+        return self.data.n_days
 
 
 def create_data_splits(
     processed_dir: str,
     config_path: str = "config/data_config.yaml",
-    device: str = "cpu",
-) -> dict[str, CryptoStockData]:
-    """Create train/val/test CryptoStockData splits based on config ratios.
-
-    Returns:
-        dict with keys "train", "val", "test", each a CryptoStockData instance.
-    """
+    device: torch.device = torch.device("cpu"),
+    max_backtrack_days: int = 100,
+    max_future_days: int = 30,
+) -> dict:
+    """Create train/val/test CryptoStockData splits."""
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
     split_cfg = cfg["split"]
-
-    # Load panel to get full date range
     panel = load_panel(processed_dir)
     index = panel["close"].index
 
@@ -215,19 +323,19 @@ def create_data_splits(
     train_end = int(n * split_cfg["train_ratio"])
     val_end = train_end + int(n * split_cfg["val_ratio"])
 
-    train_start = str(index[0])
-    train_end_date = str(index[train_end - 1])
-    val_start = str(index[train_end])
-    val_end_date = str(index[val_end - 1])
-    test_start = str(index[val_end])
-    test_end_date = str(index[-1])
-
-    logger.info(f"Train: {train_start} -> {train_end_date}")
-    logger.info(f"Val:   {val_start} -> {val_end_date}")
-    logger.info(f"Test:  {test_start} -> {test_end_date}")
-
-    return {
-        "train": CryptoStockData(processed_dir, train_start, train_end_date, device),
-        "val": CryptoStockData(processed_dir, val_start, val_end_date, device),
-        "test": CryptoStockData(processed_dir, test_start, test_end_date, device),
+    splits_def = {
+        "train": (str(index[0]), str(index[train_end - 1])),
+        "val": (str(index[train_end]), str(index[val_end - 1])),
+        "test": (str(index[val_end]), str(index[-1])),
     }
+
+    splits = {}
+    for name, (start, end) in splits_def.items():
+        logger.info(f"{name}: {start} -> {end}")
+        splits[name] = load_crypto_stock_data(
+            processed_dir, start, end,
+            max_backtrack_days=max_backtrack_days,
+            max_future_days=max_future_days,
+            device=device,
+        )
+    return splits

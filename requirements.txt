@@ -1,10 +1,9 @@
 # Core
 torch
-torchvision
 numpy
 pandas
-polars
 pyarrow
+scipy
 
 # Binance API
 python-binance
@@ -15,12 +14,14 @@ pyyaml
 tqdm
 loguru
 
-# Qlib (AlphaGen dependency)
-qlib
+# RL (AlphaGen / AlphaQCM)
+gymnasium
+sb3_contrib>=2.0
+stable_baselines3>=2.0
+shimmy
+tensorboard
 
-# Evaluation & Backtest
-alphalens-reloaded
-empyrical
+# Evaluation & Visualization
 matplotlib
 seaborn
 
