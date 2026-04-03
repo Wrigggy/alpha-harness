@@ -21,7 +21,6 @@ import torch
 import yaml
 from loguru import logger
 
-from src.data_adapter.feature_engineering import compute_normalized_features
 from src.data_collection.data_cleaner import load_panel
 
 
@@ -224,7 +223,8 @@ def load_crypto_stock_data(
 
     stacked = np.stack(arrays, axis=0)           # (6, total_bars, n_stocks)
     stacked = np.transpose(stacked, (1, 0, 2))   # (total_bars, 6, n_stocks)
-    stacked = np.nan_to_num(stacked, nan=0.0)
+    # Keep NaN for missing data — AlphaGen's normalize_by_day masks NaN correctly.
+    # Replacing with 0.0 would corrupt price signals (0 price → -100% return artifacts).
 
     data_tensor = torch.tensor(stacked, dtype=torch.float32, device=device)
 
@@ -357,9 +357,12 @@ def create_data_splits(
     # Start train after backtrack buffer so rolling operators have enough history.
     safe_start = max_backtrack_days
 
+    # Leave a gap of max_future_days between each split's core end and the
+    # next split's start, so the target Ref(close, -20) for the last training
+    # bars does NOT peek into the validation period (and likewise val→test).
     splits_def = {
-        "train": (str(index[safe_start]), str(index[safe_end(train_end - 1)])),
-        "val": (str(index[train_end]), str(index[safe_end(val_end - 1)])),
+        "train": (str(index[safe_start]), str(index[train_end - 1 - max_future_days])),
+        "val": (str(index[train_end]), str(index[safe_end(val_end - 1 - max_future_days)])),
         "test": (str(index[val_end]), str(index[safe_end(n - 1)])),
     }
 

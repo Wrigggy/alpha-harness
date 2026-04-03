@@ -128,7 +128,7 @@ async def download_universe(
 
     now = datetime.now(timezone.utc)
     start_year = now.year - lookback_years
-    start_month = now.month
+    start_month = 1  # Always start from January for full history
     # Don't include current month (incomplete)
     end_month = now.month - 1 if now.month > 1 else 12
     end_year = now.year if now.month > 1 else now.year - 1

@@ -97,13 +97,14 @@ def long_short_backtest(
         new_weights[long_symbols] = 1.0 / n_long
         new_weights[short_symbols] = -1.0 / n_short
 
-        # Transaction cost from turnover
+        # On rebalance bar: use OLD weights for this bar's return (no look-ahead),
+        # then switch to new weights for subsequent bars.
+        # Transaction cost is deducted on the rebalance bar.
         turnover = (new_weights - prev_weights).abs().sum()
         tc_cost = turnover * tc
 
-        # Portfolio return for this bar
         bar_ret = ret.loc[date]
-        port_ret = (new_weights * bar_ret).sum() - tc_cost
+        port_ret = (prev_weights * bar_ret).sum() - tc_cost
 
         portfolio_returns.append({"date": date, "return": port_ret})
         weights_records.append({"date": date, **new_weights.to_dict()})

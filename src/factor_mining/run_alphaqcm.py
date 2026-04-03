@@ -23,18 +23,23 @@ _ROOT = Path(__file__).resolve().parents[2]
 _QCM_PATH = str(_ROOT / "external" / "alphaqcm")
 _ALPHAGEN_PATH = str(_ROOT / "external" / "alphagen")
 
-# Remove cached alphagen modules so QCM's fork takes priority
-for mod_name in list(sys.modules.keys()):
-    if mod_name.startswith("alphagen"):
-        del sys.modules[mod_name]
+# WARNING: This module manipulates sys.path and sys.modules to force-load
+# AlphaQCM's fork of alphagen. Only safe when run as __main__ script.
+# Do NOT import this module from other code.
 
-# QCM path MUST be before alphagen path
-if _QCM_PATH in sys.path:
-    sys.path.remove(_QCM_PATH)
-sys.path.insert(0, _QCM_PATH)
-if _ALPHAGEN_PATH in sys.path:
-    sys.path.remove(_ALPHAGEN_PATH)
-sys.path.insert(1, _ALPHAGEN_PATH)
+def _setup_qcm_paths():
+    """Remove cached upstream alphagen and ensure QCM fork has priority."""
+    for mod_name in list(sys.modules.keys()):
+        if mod_name.startswith("alphagen"):
+            del sys.modules[mod_name]
+    if _QCM_PATH in sys.path:
+        sys.path.remove(_QCM_PATH)
+    sys.path.insert(0, _QCM_PATH)
+    if _ALPHAGEN_PATH in sys.path:
+        sys.path.remove(_ALPHAGEN_PATH)
+    sys.path.insert(1, _ALPHAGEN_PATH)
+
+_setup_qcm_paths()
 
 import torch
 import yaml
