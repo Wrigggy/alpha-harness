@@ -1,0 +1,26 @@
+num_steps: 300_000
+batch_size: 128
+N: 64
+N_dash: 64
+K: 32
+num_cosines: 64
+kappa: 1.0
+lr: 5.e-5
+memory_size: 100_000
+gamma: 1
+multi_step: 1
+update_interval: 1
+target_update_interval: 2_000
+start_steps: 20_000
+epsilon_train: 0.10              # 10% random — IQN needs even more exploration in this env
+epsilon_eval: 0.001
+epsilon_decay_steps: 150_000     # Decay very slowly
+double_q_learning: False
+dueling_net: False
+noisy_net: False
+use_per: True
+log_interval: 100
+eval_interval: 1_000
+num_eval_steps: 125000
+max_episode_steps: 27000
+grad_cliping:

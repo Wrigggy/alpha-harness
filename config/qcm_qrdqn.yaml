@@ -9,7 +9,7 @@ multi_step: 3
 update_interval: 1
 target_update_interval: 2_000    # Was 5000 — update target net faster to avoid stale Q-values
 start_steps: 20_000              # Was 10000 — more random exploration before learning
-epsilon_train: 0.05              # Was 0.01 — 5% random actions to break repetition loops
+epsilon_train: 0.10              # 10% random actions — 5% was not enough to break nesting loops
 epsilon_eval: 0.001
 epsilon_decay_steps: 100_000     # Was 25000 — decay slower to maintain exploration longer
 double_q_learning: False
