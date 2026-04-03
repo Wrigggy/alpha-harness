@@ -46,6 +46,8 @@ async def select_universe(config_path: str = "config/data_config.yaml") -> list[
     # Build symbol metadata from exchange info (perpetual contracts only)
     symbol_meta = {}
     now = datetime.now(timezone.utc)
+    min_onboard_ts = int((now.timestamp() - min_listing_months * 30 * 86400) * 1000)
+
     for s in exchange_info["symbols"]:
         if s["quoteAsset"] != quote_asset:
             continue
@@ -53,6 +55,10 @@ async def select_universe(config_path: str = "config/data_config.yaml") -> list[
             continue
         # Only perpetual contracts, skip delivery futures
         if s.get("contractType") != "PERPETUAL":
+            continue
+        # Filter by minimum listing age
+        onboard = s.get("onboardDate", 0)
+        if onboard > min_onboard_ts:
             continue
         symbol_meta[s["symbol"]] = {
             "symbol": s["symbol"],

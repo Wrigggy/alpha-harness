@@ -40,13 +40,6 @@ from alphagen.data.expression import Expression
 from alphagen.utils.pytorch_utils import normalize_by_day
 from alphagen.utils.correlation import batch_pearsonr, batch_spearmanr
 
-# Extend FeatureType with FUNDING_RATE (index 6) for crypto perpetual futures
-if not hasattr(FeatureType, "FUNDING"):
-    import enum
-    FeatureType = enum.IntEnum("FeatureType", {
-        "OPEN": 0, "CLOSE": 1, "HIGH": 2, "LOW": 3,
-        "VOLUME": 4, "VWAP": 5, "FUNDING": 6,
-    })
 
 
 class CryptoStockData:
@@ -68,7 +61,7 @@ class CryptoStockData:
         start_time: str = "",
         end_time: str = "",
         max_backtrack_days: int = 100,
-        max_future_days: int = 30,
+        max_future_days: int = 5,
         features: Optional[List[FeatureType]] = None,
         device: torch.device = torch.device("cpu"),
         preloaded_data: Optional[Tuple[torch.Tensor, pd.Index, pd.Index]] = None,
@@ -169,7 +162,7 @@ def load_crypto_stock_data(
     start_time: str,
     end_time: str,
     max_backtrack_days: int = 100,
-    max_future_days: int = 30,
+    max_future_days: int = 5,
     device: torch.device = torch.device("cpu"),
 ) -> CryptoStockData:
     """Factory: load crypto data into CryptoStockData.
@@ -224,14 +217,8 @@ def load_crypto_stock_data(
         "volume": panel["volume"],
         "vwap": vwap,
     }
-    # Feature order matches FeatureType enum: OPEN=0, CLOSE=1, HIGH=2, LOW=3, VOLUME=4, VWAP=5, FUNDING=6
+    # Feature order matches FeatureType enum: OPEN=0, CLOSE=1, HIGH=2, LOW=3, VOLUME=4, VWAP=5
     feature_order = ["open", "close", "high", "low", "volume", "vwap"]
-
-    # Add funding rate as 7th feature if available
-    if "funding_rate" in panel:
-        raw_fields["funding_rate"] = panel["funding_rate"]
-        feature_order.append("funding_rate")
-        logger.info("Including funding_rate as feature index 6")
     arrays = []
     for fname in feature_order:
         arrays.append(raw_fields[fname].loc[selected_index].values.astype(np.float32))
@@ -350,7 +337,7 @@ def create_data_splits(
     config_path: str = "config/data_config.yaml",
     device: torch.device = torch.device("cpu"),
     max_backtrack_days: int = 100,
-    max_future_days: int = 30,
+    max_future_days: int = 5,
 ) -> dict:
     """Create train/val/test CryptoStockData splits."""
     with open(config_path, encoding="utf-8") as f:
@@ -365,16 +352,14 @@ def create_data_splits(
     val_end = train_end + int(n * split_cfg["val_ratio"])
 
     # End each split early enough to leave room for max_future_days buffer.
-    # The target expression Ref(close, -20) looks 20 bars ahead, so we need
-    # at least max_future_days bars after the last usable bar.
+    # The target expression Ref(close, -1) looks 1 bar ahead.
     safe_end = lambda idx: min(idx, n - 1 - max_future_days)
 
     # Start train after backtrack buffer so rolling operators have enough history.
     safe_start = max_backtrack_days
 
     # Leave a gap of max_future_days between each split's core end and the
-    # next split's start, so the target Ref(close, -20) for the last training
-    # bars does NOT peek into the validation period (and likewise val→test).
+    # next split's start, so the target doesn't peek across split boundaries.
     splits_def = {
         "train": (str(index[safe_start]), str(index[train_end - 1 - max_future_days])),
         "val": (str(index[train_end]), str(index[safe_end(val_end - 1 - max_future_days)])),
