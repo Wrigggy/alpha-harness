@@ -71,10 +71,37 @@ def clean_and_align(
     return cleaned
 
 
-def build_panel(cleaned: dict[str, pd.DataFrame], common_index: pd.DatetimeIndex) -> dict[str, pd.DataFrame]:
+def load_funding_rates(raw_dir: str, symbols: list[str], common_index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Load funding rate parquet files and build a timestamp x symbol matrix."""
+    raw_path = Path(raw_dir)
+    matrix = pd.DataFrame(index=common_index, columns=symbols, dtype=float)
+
+    loaded = 0
+    for sym in symbols:
+        path = raw_path / f"{sym}_funding.parquet"
+        if not path.exists():
+            continue
+        df = pd.read_parquet(path)
+        df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+        df = df.set_index("datetime")["funding_rate"]
+        # Reindex to common 1H index, forward-fill (rate is constant between updates)
+        df = df.reindex(common_index).ffill()
+        matrix[sym] = df
+        loaded += 1
+
+    logger.info(f"Loaded funding rates for {loaded}/{len(symbols)} symbols")
+    return matrix
+
+
+def build_panel(
+    cleaned: dict[str, pd.DataFrame],
+    common_index: pd.DatetimeIndex,
+    raw_dir: str = "data/raw",
+) -> dict[str, pd.DataFrame]:
     """Build field-level DataFrames (timestamp x symbol matrices).
 
-    Returns dict with keys: open, high, low, close, volume, quote_volume, ret_1h, ret_4h
+    Returns dict with keys: open, high, low, close, volume, quote_volume,
+    funding_rate, ret_1h, ret_4h
     """
     symbols = sorted(cleaned.keys())
     fields = ["open", "high", "low", "close", "volume", "quote_volume"]
@@ -87,10 +114,14 @@ def build_panel(cleaned: dict[str, pd.DataFrame], common_index: pd.DatetimeIndex
                 matrix[sym] = cleaned[sym][field]
         panel[field] = matrix
 
+    # Load funding rate data
+    panel["funding_rate"] = load_funding_rates(raw_dir, symbols, common_index)
+
     # Compute forward returns (shift negative = look forward)
     close = panel["close"]
     panel["ret_1h"] = close.shift(-1) / close - 1
     panel["ret_4h"] = close.shift(-4) / close - 1
+    panel["ret_20h"] = close.shift(-20) / close - 1  # Matches AlphaGen target horizon
 
     logger.info(f"Panel built: {len(symbols)} symbols, {len(common_index)} bars, {len(panel)} fields")
     return panel
@@ -142,8 +173,8 @@ def run_cleaning(config_path: str = "config/data_config.yaml"):
     common_index = build_common_index(data)
     cleaned = clean_and_align(data, common_index)
 
-    # Build panel
-    panel = build_panel(cleaned, common_index)
+    # Build panel (includes funding rate if available)
+    panel = build_panel(cleaned, common_index, raw_dir=raw_dir)
 
     # Save
     save_panel(panel, processed_dir)

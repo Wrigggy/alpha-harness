@@ -21,7 +21,7 @@ def compute_metrics(equity_curve: pd.Series) -> dict:
     # Annualized return
     total_return = equity_curve.iloc[-1] / equity_curve.iloc[0] - 1
     n_bars = len(equity_curve)
-    annual_return = (1 + total_return) ** (BARS_PER_YEAR / max(n_bars, 1)) - 1
+    annual_return = (1 + total_return) ** (BARS_PER_YEAR / max(n_bars - 1, 1)) - 1
 
     # Annualized volatility
     annual_vol = returns.std() * np.sqrt(BARS_PER_YEAR)

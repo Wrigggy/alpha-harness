@@ -40,6 +40,14 @@ from alphagen.data.expression import Expression
 from alphagen.utils.pytorch_utils import normalize_by_day
 from alphagen.utils.correlation import batch_pearsonr, batch_spearmanr
 
+# Extend FeatureType with FUNDING_RATE (index 6) for crypto perpetual futures
+if not hasattr(FeatureType, "FUNDING"):
+    import enum
+    FeatureType = enum.IntEnum("FeatureType", {
+        "OPEN": 0, "CLOSE": 1, "HIGH": 2, "LOW": 3,
+        "VOLUME": 4, "VWAP": 5, "FUNDING": 6,
+    })
+
 
 class CryptoStockData:
     """Drop-in replacement for AlphaGen's StockData.
@@ -216,7 +224,14 @@ def load_crypto_stock_data(
         "volume": panel["volume"],
         "vwap": vwap,
     }
+    # Feature order matches FeatureType enum: OPEN=0, CLOSE=1, HIGH=2, LOW=3, VOLUME=4, VWAP=5, FUNDING=6
     feature_order = ["open", "close", "high", "low", "volume", "vwap"]
+
+    # Add funding rate as 7th feature if available
+    if "funding_rate" in panel:
+        raw_fields["funding_rate"] = panel["funding_rate"]
+        feature_order.append("funding_rate")
+        logger.info("Including funding_rate as feature index 6")
     arrays = []
     for fname in feature_order:
         arrays.append(raw_fields[fname].loc[selected_index].values.astype(np.float32))

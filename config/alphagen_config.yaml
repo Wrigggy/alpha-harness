@@ -30,6 +30,7 @@ features:
   - "low"
   - "volume"
   - "vwap"
+  - "funding_rate"
 constants:
   - 0
   - 1
