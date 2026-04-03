@@ -70,7 +70,7 @@ async def fetch_all_klines(
                     session, symbol, interval,
                     start_time=current_start, end_time=end_time,
                 )
-                await asyncio.sleep(0.2)  # Rate limit: wait between requests
+                await asyncio.sleep(0.1)  # Small delay between requests
         else:
             candles = await fetch_klines(
                 session, symbol, interval,
@@ -171,31 +171,41 @@ async def download_universe(
     symbols: list[str],
     config_path: str = "config/data_config.yaml",
 ):
-    """Download OHLCV data for all symbols in the universe."""
+    """Download OHLCV data for all symbols in the universe.
+
+    Processes in batches to avoid triggering Binance rate limits.
+    """
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
     interval = cfg["data"]["interval"]
     raw_dir = cfg["data"]["raw_dir"]
-    concurrency = cfg["binance"]["concurrency"]
     lookback_years = cfg["data"]["lookback_years"]
+    batch_size = 5   # symbols per batch
+    batch_delay = 2  # seconds between batches
 
-    # Calculate start time
     now = datetime.now(timezone.utc)
     start_dt = now.replace(year=now.year - lookback_years)
     start_time = int(start_dt.timestamp() * 1000)
 
-    semaphore = asyncio.Semaphore(concurrency)
+    semaphore = asyncio.Semaphore(batch_size)
+    success = 0
+    failed = 0
 
     async with aiohttp.ClientSession() as session:
-        tasks = [
-            download_symbol(session, sym, interval, start_time, raw_dir, semaphore)
-            for sym in symbols
-        ]
-        results = await asyncio.gather(*tasks)
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            tasks = [
+                download_symbol(session, sym, interval, start_time, raw_dir, semaphore)
+                for sym in batch
+            ]
+            results = await asyncio.gather(*tasks)
+            success += sum(results)
+            failed += len(results) - sum(results)
+            logger.info(f"Progress: {i + len(batch)}/{len(symbols)} ({success} ok, {failed} failed)")
+            if i + batch_size < len(symbols):
+                await asyncio.sleep(batch_delay)
 
-    success = sum(results)
-    failed = len(results) - success
     logger.info(f"Download complete: {success} succeeded, {failed} failed out of {len(symbols)}")
 
 
