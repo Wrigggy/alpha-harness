@@ -165,9 +165,16 @@ def load_crypto_stock_data(
     max_future_days: int = 30,
     device: torch.device = torch.device("cpu"),
 ) -> CryptoStockData:
-    """Factory: load crypto data into CryptoStockData."""
+    """Factory: load crypto data into CryptoStockData.
+
+    Uses RAW OHLCV data (not pre-normalized). AlphaGen's Expression system
+    and normalize_by_day() handle normalization internally. Pre-normalizing
+    causes double-normalization and inflated IC values.
+    """
     panel = load_panel(processed_dir)
-    features = compute_normalized_features(panel)
+
+    # Compute VWAP from raw data (quote_volume / volume = average price)
+    vwap = panel["quote_volume"] / panel["volume"].replace(0, np.nan)
 
     full_index = panel["close"].index
     start_ts = pd.Timestamp(start_time, tz="UTC") if full_index.tz else pd.Timestamp(start_time)
@@ -201,10 +208,19 @@ def load_crypto_stock_data(
     symbols = list(panel["close"].columns)
 
     # Build tensor: (total_bars, n_features, n_stocks)
+    # Use RAW values — AlphaGen's normalize_by_day handles cross-sectional normalization
+    raw_fields = {
+        "open": panel["open"],
+        "close": panel["close"],
+        "high": panel["high"],
+        "low": panel["low"],
+        "volume": panel["volume"],
+        "vwap": vwap,
+    }
     feature_order = ["open", "close", "high", "low", "volume", "vwap"]
     arrays = []
     for fname in feature_order:
-        arrays.append(features[fname].loc[selected_index].values.astype(np.float32))
+        arrays.append(raw_fields[fname].loc[selected_index].values.astype(np.float32))
 
     stacked = np.stack(arrays, axis=0)           # (6, total_bars, n_stocks)
     stacked = np.transpose(stacked, (1, 0, 2))   # (total_bars, 6, n_stocks)
