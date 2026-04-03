@@ -77,8 +77,11 @@ def run_alphaqcm(
     device = get_device(cfg.get("device", "auto"))
     use_cuda = device.type == "cuda"
 
-    # Load QCM agent config
-    qcm_config_path = _ROOT / "external" / "alphaqcm" / "qcm_config" / f"{model_type}.yaml"
+    # Load QCM agent config — use our local tuned copy first, fall back to external
+    qcm_config_path = _ROOT / "config" / f"qcm_{model_type}.yaml"
+    if not qcm_config_path.exists():
+        qcm_config_path = _ROOT / "external" / "alphaqcm" / "qcm_config" / f"{model_type}.yaml"
+    logger.info(f"QCM agent config: {qcm_config_path}")
     with open(qcm_config_path, encoding="utf-8") as f:
         agent_config = yaml.safe_load(f)
 
