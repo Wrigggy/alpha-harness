@@ -1,4 +1,4 @@
-"""Select top trading pairs from Binance by volume, filtered for quality."""
+"""Select top USDT-margined perpetual futures pairs from Binance by volume."""
 
 import json
 from datetime import datetime, timezone
@@ -9,7 +9,7 @@ import asyncio
 import yaml
 from loguru import logger
 
-BASE_URL = "https://api.binance.com"
+BASE_URL = "https://fapi.binance.com"
 
 STABLECOINS = {"USDT", "USDC", "DAI", "BUSD", "TUSD", "FDUSD", "USDP", "PYUSD"}
 LEVERAGED_SUFFIXES = ("UP", "DOWN", "BULL", "BEAR")
@@ -38,12 +38,12 @@ async def select_universe(config_path: str = "config/data_config.yaml") -> list[
     exclude_leveraged = uni_cfg.get("exclude_leveraged_tokens", True)
 
     async with aiohttp.ClientSession() as session:
-        # Fetch tickers and exchange info concurrently
-        tickers_task = fetch_json(session, f"{BASE_URL}/api/v3/ticker/24hr")
-        exchange_info_task = fetch_json(session, f"{BASE_URL}/api/v3/exchangeInfo")
+        # Fetch futures tickers and exchange info concurrently
+        tickers_task = fetch_json(session, f"{BASE_URL}/fapi/v1/ticker/24hr")
+        exchange_info_task = fetch_json(session, f"{BASE_URL}/fapi/v1/exchangeInfo")
         tickers, exchange_info = await asyncio.gather(tickers_task, exchange_info_task)
 
-    # Build symbol metadata from exchange info
+    # Build symbol metadata from exchange info (perpetual contracts only)
     symbol_meta = {}
     now = datetime.now(timezone.utc)
     for s in exchange_info["symbols"]:
@@ -51,10 +51,14 @@ async def select_universe(config_path: str = "config/data_config.yaml") -> list[
             continue
         if s["status"] != "TRADING":
             continue
+        # Only perpetual contracts, skip delivery futures
+        if s.get("contractType") != "PERPETUAL":
+            continue
         symbol_meta[s["symbol"]] = {
             "symbol": s["symbol"],
             "base": s["baseAsset"],
             "quote": s["quoteAsset"],
+            "contract_type": "PERPETUAL",
         }
 
     # Build volume map from tickers

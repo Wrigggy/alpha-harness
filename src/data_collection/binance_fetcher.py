@@ -1,4 +1,4 @@
-"""Async Binance OHLCV data downloader with incremental updates."""
+"""Async Binance USDT-margined perpetual futures OHLCV data downloader."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -9,9 +9,9 @@ import pandas as pd
 import yaml
 from loguru import logger
 
-BASE_URL = "https://api.binance.com"
-KLINE_ENDPOINT = "/api/v3/klines"
-MAX_CANDLES_PER_REQUEST = 1000
+BASE_URL = "https://fapi.binance.com"
+KLINE_ENDPOINT = "/fapi/v1/klines"
+MAX_CANDLES_PER_REQUEST = 1500  # Futures API allows up to 1500
 
 # Column names for kline response
 KLINE_COLUMNS = [
