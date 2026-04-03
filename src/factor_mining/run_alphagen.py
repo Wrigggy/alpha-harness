@@ -107,6 +107,7 @@ def run_alphagen(
         ent_coef=cfg["entropy_coef"],
         verbose=1,
         device=device,
+        tensorboard_log="./out/tensorboard",
     )
 
     logger.info(f"Starting AlphaGen PPO: {n_steps} timesteps on {device}")
