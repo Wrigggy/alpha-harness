@@ -187,6 +187,16 @@ def load_crypto_stock_data(
     actual_backtrack = core_start - buf_start
     actual_future = buf_end - core_end
 
+    if actual_future < max_future_days:
+        logger.warning(
+            f"Requested future buffer {max_future_days} but only {actual_future} bars available. "
+            f"Target expressions needing forward data may fail. Consider ending the split earlier."
+        )
+    if actual_backtrack < max_backtrack_days:
+        logger.warning(
+            f"Requested backtrack buffer {max_backtrack_days} but only {actual_backtrack} bars available."
+        )
+
     selected_index = full_index[buf_start:buf_end + 1]
     symbols = list(panel["close"].columns)
 
@@ -323,10 +333,18 @@ def create_data_splits(
     train_end = int(n * split_cfg["train_ratio"])
     val_end = train_end + int(n * split_cfg["val_ratio"])
 
+    # End each split early enough to leave room for max_future_days buffer.
+    # The target expression Ref(close, -20) looks 20 bars ahead, so we need
+    # at least max_future_days bars after the last usable bar.
+    safe_end = lambda idx: min(idx, n - 1 - max_future_days)
+
+    # Start train after backtrack buffer so rolling operators have enough history.
+    safe_start = max_backtrack_days
+
     splits_def = {
-        "train": (str(index[0]), str(index[train_end - 1])),
-        "val": (str(index[train_end]), str(index[val_end - 1])),
-        "test": (str(index[val_end]), str(index[-1])),
+        "train": (str(index[safe_start]), str(index[safe_end(train_end - 1)])),
+        "val": (str(index[train_end]), str(index[safe_end(val_end - 1)])),
+        "test": (str(index[val_end]), str(index[safe_end(n - 1)])),
     }
 
     splits = {}
