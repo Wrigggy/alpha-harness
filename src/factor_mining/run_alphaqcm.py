@@ -3,6 +3,9 @@
 AlphaQCM uses its own fork of AlphaGen in external/alphaqcm/alphagen/.
 We use that fork's AlphaPool and the QCM agents from fqf_iqn_qrdqn/.
 
+IMPORTANT: This script must force-load AlphaQCM's alphagen fork BEFORE
+any other module imports the upstream alphagen.
+
 Usage:
     python -m src.factor_mining.run_alphaqcm --small-scale
     python -m src.factor_mining.run_alphaqcm --model iqn
@@ -14,16 +17,30 @@ import json
 from pathlib import Path
 from datetime import datetime
 
+# CRITICAL: AlphaQCM's fork must be loaded first.
+# Remove any cached upstream alphagen modules, then put QCM's path first.
+_ROOT = Path(__file__).resolve().parents[2]
+_QCM_PATH = str(_ROOT / "external" / "alphaqcm")
+_ALPHAGEN_PATH = str(_ROOT / "external" / "alphagen")
+
+# Remove cached alphagen modules so QCM's fork takes priority
+for mod_name in list(sys.modules.keys()):
+    if mod_name.startswith("alphagen"):
+        del sys.modules[mod_name]
+
+# QCM path MUST be before alphagen path
+if _QCM_PATH in sys.path:
+    sys.path.remove(_QCM_PATH)
+sys.path.insert(0, _QCM_PATH)
+if _ALPHAGEN_PATH in sys.path:
+    sys.path.remove(_ALPHAGEN_PATH)
+sys.path.insert(1, _ALPHAGEN_PATH)
+
 import torch
 import yaml
 from loguru import logger
 
-# AlphaQCM has its own copy of alphagen; put it first on path so its
-# AlphaPool (different from upstream) is imported correctly.
-_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_ROOT / "external" / "alphaqcm"))
-sys.path.insert(0, str(_ROOT / "external" / "alphagen"))
-
+# Now import from QCM's fork — AlphaPool exists here
 from alphagen.data.expression import Feature, FeatureType, Ref
 from alphagen.models.alpha_pool import AlphaPool
 from alphagen.rl.env.wrapper import AlphaEnv
@@ -31,7 +48,6 @@ from alphagen.rl.env.wrapper import AlphaEnv
 from fqf_iqn_qrdqn.agent import QRQCMAgent, IQCMAgent, FQCMAgent
 
 from src.data_adapter.to_alphagen_format import (
-    load_crypto_stock_data,
     CryptoAlphaCalculator,
     create_data_splits,
 )
@@ -83,7 +99,7 @@ def run_alphaqcm(
     valid_calc = CryptoAlphaCalculator(splits["val"], target)
     test_calc = CryptoAlphaCalculator(splits["test"], target)
 
-    # AlphaQCM's own AlphaPool (different from upstream alphagen)
+    # AlphaQCM's own AlphaPool
     pool = AlphaPool(
         capacity=pool_capacity,
         calculator=train_calc,
@@ -116,6 +132,7 @@ def run_alphaqcm(
 
     logger.info(f"Starting AlphaQCM ({model_type}): {agent_config['num_steps']} steps on {device}")
     logger.info(f"Train: {splits['train'].n_days} bars x {splits['train'].n_stocks} symbols")
+    logger.info(f"Tensorboard: {log_dir}")
 
     # Train
     agent.run()
