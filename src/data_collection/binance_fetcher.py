@@ -28,17 +28,27 @@ async def fetch_klines(
     start_time: int | None = None,
     end_time: int | None = None,
     limit: int = MAX_CANDLES_PER_REQUEST,
+    max_retries: int = 5,
 ) -> list[list]:
-    """Fetch a single batch of klines from Binance."""
+    """Fetch a single batch of klines from Binance with retry on rate limit."""
     params = {"symbol": symbol, "interval": interval, "limit": limit}
     if start_time:
         params["startTime"] = start_time
     if end_time:
         params["endTime"] = end_time
 
-    async with session.get(f"{BASE_URL}{KLINE_ENDPOINT}", params=params) as resp:
-        resp.raise_for_status()
-        return await resp.json()
+    for attempt in range(max_retries):
+        async with session.get(f"{BASE_URL}{KLINE_ENDPOINT}", params=params) as resp:
+            if resp.status == 418 or resp.status == 429:
+                # Rate limited — back off exponentially
+                wait = 30 * (2 ** attempt)  # 30s, 60s, 120s, 240s, 480s
+                logger.warning(f"{symbol}: rate limited ({resp.status}), waiting {wait}s (attempt {attempt+1})")
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return await resp.json()
+
+    raise Exception(f"{symbol}: still rate limited after {max_retries} retries")
 
 
 async def fetch_all_klines(
@@ -60,11 +70,13 @@ async def fetch_all_klines(
                     session, symbol, interval,
                     start_time=current_start, end_time=end_time,
                 )
+                await asyncio.sleep(0.2)  # Rate limit: wait between requests
         else:
             candles = await fetch_klines(
                 session, symbol, interval,
                 start_time=current_start, end_time=end_time,
             )
+            await asyncio.sleep(0.2)
 
         if not candles:
             break

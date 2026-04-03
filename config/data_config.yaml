@@ -2,7 +2,7 @@
 binance:
   base_url: "https://fapi.binance.com"
   rate_limit: 2400  # futures API allows more requests per minute
-  concurrency: 10   # concurrent async requests
+  concurrency: 3    # keep low to avoid 418 rate limit on futures API
   kline_limit: 1500 # futures API allows up to 1500 per request
 
 # Universe settings
