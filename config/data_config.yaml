@@ -1,9 +1,8 @@
-# Binance Futures API settings
+# Binance data settings
 binance:
-  base_url: "https://fapi.binance.com"
-  rate_limit: 2400  # futures API allows more requests per minute
-  concurrency: 3    # keep low to avoid 418 rate limit on futures API
-  kline_limit: 1500 # futures API allows up to 1500 per request
+  base_url: "https://data.binance.vision"  # Public bulk data (no rate limits)
+  api_url: "https://fapi.binance.com"      # Futures API (for universe selection)
+  concurrency: 20   # CDN downloads, no rate limit concerns
 
 # Universe settings
 universe:
