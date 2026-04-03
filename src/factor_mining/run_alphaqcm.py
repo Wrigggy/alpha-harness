@@ -82,6 +82,10 @@ def run_alphaqcm(
     with open(qcm_config_path) as f:
         agent_config = yaml.safe_load(f)
 
+    # Override num_steps from our config to match AlphaGen for fair comparison
+    # QCM default is 2M which is too much; use n_episodes from our config
+    agent_config["num_steps"] = cfg.get("n_episodes", 300_000)
+
     if small_scale:
         agent_config["num_steps"] = cfg.get("small_scale", {}).get("n_episodes", 50_000)
         logger.info(f"Small-scale mode: {agent_config['num_steps']} steps")
