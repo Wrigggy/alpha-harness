@@ -132,15 +132,15 @@ def run_alphagen(
 
     splits = create_data_splits(
         processed_dir, data_config_path, device=device,
-        max_backtrack_days=100, max_future_days=5,
+        max_backtrack_days=100, max_future_days=10,
     )
     data_train = splits["train"]
     data_valid = splits["val"]
     data_test = splits["test"]
 
-    # Define target: 1-bar forward return (1 hour for 1H data)
+    # Define target: 8-bar forward return (8 hours for 1H data)
     close = Feature(FeatureType.CLOSE)
-    target = Ref(close, -1) / close - 1
+    target = Ref(close, -8) / close - 1
 
     # Create calculators
     train_calc = CryptoAlphaCalculator(data_train, target)

@@ -352,7 +352,7 @@ def create_data_splits(
     val_end = train_end + int(n * split_cfg["val_ratio"])
 
     # End each split early enough to leave room for max_future_days buffer.
-    # The target expression Ref(close, -1) looks 1 bar ahead.
+    # The target expression Ref(close, -8) looks 8 bars ahead.
     safe_end = lambda idx: min(idx, n - 1 - max_future_days)
 
     # Start train after backtrack buffer so rolling operators have enough history.

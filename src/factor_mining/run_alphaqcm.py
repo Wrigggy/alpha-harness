@@ -100,12 +100,12 @@ def run_alphaqcm(
 
     splits = create_data_splits(
         processed_dir, data_config_path, device=device,
-        max_backtrack_days=100, max_future_days=5,
+        max_backtrack_days=100, max_future_days=10,
     )
 
-    # Target: 20-bar forward return
+    # Target: 8-bar forward return (8 hours for 1H data)
     close = Feature(FeatureType.CLOSE)
-    target = Ref(close, -1) / close - 1
+    target = Ref(close, -8) / close - 1
 
     train_calc = CryptoAlphaCalculator(splits["train"], target)
     valid_calc = CryptoAlphaCalculator(splits["val"], target)

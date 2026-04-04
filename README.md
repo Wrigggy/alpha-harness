@@ -169,7 +169,7 @@ Device is auto-detected via `src/utils/device.py`.
 
 - **No Qlib dependency**: CryptoStockData replaces Qlib's data loader entirely, producing the same tensor format `(bars, features, stocks)` that AlphaGen's Expression tree expects.
 - **Compatible with both forks**: CryptoAlphaCalculator implements the union of methods needed by upstream AlphaGen's `TensorAlphaCalculator` and AlphaQCM's simpler `AlphaCalculator`.
-- **Target**: 20-bar forward return (`Ref(close, -20) / close - 1`), i.e., 20-hour return for 1H data.
+- **Target**: 8-bar forward return (`Ref(close, -8) / close - 1`), i.e., 8-hour return for 1H data.
 - **Chronological splits**: Train 70% / Val 15% / Test 15%, no random shuffling.
 
 ## CUDA Machine Quick Start (Copy-Paste)
