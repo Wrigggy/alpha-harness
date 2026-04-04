@@ -1,12 +1,12 @@
 num_steps: 300_000
 batch_size: 128
-N: 200
+N: 32
 kappa: 1.0
 lr: 5.e-5
 memory_size: 100_000
 gamma: 1
 multi_step: 3
-update_interval: 1
+update_interval: 4
 target_update_interval: 2_000    # Was 5000 — update target net faster to avoid stale Q-values
 start_steps: 20_000              # Was 10000 — more random exploration before learning
 epsilon_train: 0.10              # 10% random actions — 5% was not enough to break nesting loops
