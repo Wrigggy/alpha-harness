@@ -120,6 +120,11 @@ def run_alphaqcm(
     )
     env = AlphaEnv(pool=pool, device=device, print_expr=True)
 
+    # Patch: QCM agent accesses env.pool directly, but AlphaEnvWrapper
+    # doesn't expose it. Add a pool property so agent.env.pool works.
+    if not hasattr(env, "pool"):
+        env.pool = env.unwrapped.pool
+
     # Log directory
     time_str = datetime.now().strftime("%Y%m%d-%H%M")
     log_dir = str(
