@@ -1,200 +1,158 @@
-# Crypto Alpha Factor Mining Pipeline
+# Alpha Harness
 
-End-to-end pipeline for mining formulaic alpha factors from crypto markets using AlphaGen (PPO) and AlphaQCM (distributional RL).
+LLM-guided alpha research framework. Combines automated alpha discovery (AlphaGen/AlphaQCM RL search) with LLM-based economic reasoning to produce interpretable, robust quantitative factors.
 
-## Pipeline Overview
+**Core research question**: Does LLM-based economic reasoning improve the quality of RL-discovered alphas?
 
-1. **Data Collection** — Fetch 1H OHLCV from Binance for ~500 trading pairs
-2. **Data Adapter** — Convert to AlphaGen/AlphaQCM tensor format (drop-in StockData replacement)
-3. **Factor Mining** — Run AlphaGen (PPO) and AlphaQCM (IQN/QR-DQN) to discover formulaic alphas
-4. **Evaluation** — IC/ICIR/RankIC/RankICIR analysis, factor correlation, IC decay
-5. **Backtest** — Top-N long / bottom-N short portfolio with transaction costs
+## Architecture
 
-## Setup (Full Instructions — works on both Mac and CUDA machines)
-
-### 1. Clone the project
-
-```bash
-git clone https://github.com/Wrigggy/crypto-alpha-mining.git
-cd crypto-alpha-mining
+```
+Data Sources (Crypto / CSI500)
+        │
+        ▼
+Feature Expansion (OHLCV → 50+ features)
+        │
+        ▼
+Factor Search (AlphaGen PPO / AlphaQCM distributional RL)
+        │
+        ▼
+LLM Judge (post-filter: expression → NL → score)
+        │   ├── Expression → natural language translation
+        │   ├── Tag-match relevant papers from knowledge base
+        │   └── Score interpretability (0-1)
+        │
+        ▼
+Validation Gate (IC > 0.03, ICIR > 0.5, turnover < 0.3, decay > 3 bars)
+        │
+        ▼
+Portfolio Combination (equal weight / IC-weighted / ridge regression)
+        │
+        ▼
+Backtest (long-short with transaction costs)
 ```
 
-### 2. Create Python environment
+## Setup
 
-**Option A: uv (recommended, fastest)**
 ```bash
-# Install uv if not already installed
-# macOS: brew install uv
-# Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
+git clone https://github.com/Wrigggy/alpha-harness.git
+cd alpha-harness
 
-uv venv --python 3.10 .venv
-source .venv/bin/activate    # Linux/Mac
-# .venv\Scripts\activate     # Windows
-
+# Python environment
+uv venv --python 3.10 .venv && source .venv/bin/activate
 uv pip install -r requirements.txt
-```
 
-**Option B: conda**
-```bash
-conda create -n crypto-alpha python=3.10
-conda activate crypto-alpha
-pip install -r requirements.txt
-```
-
-### 3. Clone external repos
-
-```bash
+# External RL repos
 git clone https://github.com/RL-MLDM/alphagen.git external/alphagen
 git clone https://github.com/ZhuZhouFan/AlphaQCM.git external/alphaqcm
+
+# Optional: Qlib CSI500 data
+pip install pyqlib
+python -m qlib.run.get_data qlib_data --target_dir ~/.qlib/qlib_data/cn_data --region cn
 ```
 
-### 4. Install AlphaGen + AlphaQCM dependencies
+## Usage
+
+### 1. Data Pipeline (Crypto)
 
 ```bash
-# Core RL dependencies
-pip install gymnasium "sb3_contrib>=2.0" "stable_baselines3>=2.0" shimmy tensorboard
-
-# For CUDA machines, install PyTorch with CUDA support:
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-```
-
-### 5. Download and prepare data
-
-```bash
-# Select top trading pairs from Binance (saves to config/universe.json)
 python -m src.data_collection.universe_selector
-
-# Download 1H OHLCV data (takes ~8 min for 500 symbols, 2 years)
 python -m src.data_collection.binance_fetcher
-
-# Clean, align, and build panel data
 python -m src.data_collection.data_cleaner
 ```
 
-### 6. Run factor mining
+### 2. Factor Mining
 
-**AlphaGen (PPO-based):**
 ```bash
-# Small-scale test (Mac, ~10-30 min)
+# AlphaGen (PPO) — small scale for development
 python -m src.factor_mining.run_alphagen --small-scale
 
-# Full training (CUDA recommended)
-python -m src.factor_mining.run_alphagen
-```
-
-**AlphaQCM (distributional RL):**
-```bash
-# QR-DQN variant
-python -m src.factor_mining.run_alphaqcm --model qrdqn --small-scale
-
-# IQN variant (generally better)
+# AlphaQCM (distributional RL)
 python -m src.factor_mining.run_alphaqcm --model iqn --small-scale
-
-# Full training
-python -m src.factor_mining.run_alphaqcm --model iqn --pool 20 --std-lam 1.0
 ```
 
-### 7. Analyze results
+### 3. Full Pipeline (with LLM Judge)
+
+```bash
+# Evaluate a discovered factor pool with LLM scoring
+python -m src.pipeline --source crypto --judge --evaluate-pool data/factors/alphagen_pool.json
+
+# Without LLM judge (validation only)
+python -m src.pipeline --source crypto --no-judge --evaluate-pool data/factors/alphagen_pool.json
+```
+
+### 4. Analysis
 
 ```bash
 jupyter notebook notebooks/
 ```
 
-Or use the evaluation modules directly:
-```python
-from src.data_collection.data_cleaner import load_panel
-from src.evaluation.ic_analysis import evaluate_factor
-from src.backtest.long_short_backtest import long_short_backtest
-
-panel = load_panel("data/processed")
-# ... see notebooks for examples
-```
-
 ## Project Structure
 
 ```
-config/                     — YAML configs for data, AlphaGen, AlphaQCM
-  data_config.yaml          — Binance API settings, universe filters, train/val/test split
-  alphagen_config.yaml      — PPO hyperparameters, search space, pool settings
-  alphaqcm_config.yaml      — QCM hyperparameters
-  universe.json             — Selected trading pairs (generated)
-data/
-  raw/                      — Raw Binance OHLCV parquet files (1 per symbol)
-  processed/                — Cleaned panel data (timestamp × symbol matrices)
-  factors/                  — Discovered factor pools (JSON)
-src/
-  data_collection/
-    universe_selector.py    — Select top-N pairs by volume from Binance
-    binance_fetcher.py      — Async OHLCV downloader with incremental updates
-    data_cleaner.py         — Clean, align, build panel, compute forward returns
-  data_adapter/
-    feature_engineering.py  — Normalize OHLCV + compute VWAP
-    to_alphagen_format.py   — CryptoStockData (drop-in StockData replacement)
-                              + CryptoAlphaCalculator (works with both AlphaGen & QCM)
-  factor_mining/
-    run_alphagen.py         — AlphaGen PPO training launcher
-    run_alphaqcm.py         — AlphaQCM (IQN/QR-DQN/FQF) training launcher
-    factor_pool_manager.py  — Factor pool management utilities
-  evaluation/
-    ic_analysis.py          — IC, ICIR, RankIC, RankICIR
-    factor_correlation.py   — Pairwise factor correlation + heatmap
-    factor_decay.py         — IC decay over forward horizons
-  backtest/
-    long_short_backtest.py  — Top-N/bottom-N long-short portfolio
-    performance_metrics.py  — AR, Sharpe, MDD, Calmar, turnover, win rate
-  utils/
-    device.py               — Auto-detect CUDA / MPS / CPU
-    logger.py               — Loguru-based logging
-notebooks/
-  01_data_exploration.ipynb — Data quality, missing data, return distribution
-  02_factor_analysis.ipynb  — Factor IC analysis, correlation, decay
-  03_backtest_results.ipynb — Long-short backtest visualization
-external/                   — AlphaGen and AlphaQCM repos (git-ignored)
+alpha-harness/
+├── config/
+│   ├── data_config.yaml          # Data source settings
+│   ├── alphagen_config.yaml      # PPO hyperparameters
+│   ├── alphaqcm_config.yaml      # Distributional RL settings
+│   └── judge_config.yaml         # LLM judge configuration
+├── src/
+│   ├── data_collection/          # Crypto data pipeline (Binance)
+│   ├── data_adapter/             # AlphaGen/QCM tensor format bridge
+│   ├── data_sources/             # Unified data interface (crypto + Qlib)
+│   ├── feature_expansion/        # OHLCV → 50+ features
+│   ├── factor_mining/            # AlphaGen + AlphaQCM runners
+│   ├── knowledge_base/           # Paper corpus & retrieval
+│   ├── llm_judge/                # LLM-based alpha scoring
+│   ├── evaluation/               # IC analysis + validation gates
+│   ├── portfolio/                # Factor combination strategies
+│   ├── backtest/                 # Long-short portfolio backtest
+│   ├── pipeline.py               # End-to-end orchestration
+│   └── utils/                    # Device detection, logging
+├── prompts/                      # LLM prompt templates
+├── papers/                       # Paper corpus (18 seed papers)
+├── external/                     # AlphaGen + AlphaQCM repos
+├── notebooks/                    # Analysis notebooks
+└── docs/                         # Design specs
 ```
+
+## New Modules (vs. crypto-alpha-mining)
+
+| Module | Purpose |
+|--------|---------|
+| `data_sources/` | Unified data interface supporting crypto (Binance) and equity (Qlib/CSI500) |
+| `feature_expansion/` | Expands 5 OHLCV fields to 51 features (returns, volatility, momentum, VWAP, volume profile, etc.) |
+| `knowledge_base/` | 18-paper seed corpus with tag-based retrieval for LLM judge context |
+| `llm_judge/` | Expression → NL translation + interpretability scoring via Claude (Max plan or API) |
+| `evaluation/validation_gate.py` | Formalized multi-gate validation (IC, ICIR, turnover, decay, correlation, judge score) |
+| `portfolio/` | Factor combination: equal weight, IC-weighted, ridge regression |
+| `pipeline.py` | End-to-end orchestration connecting all layers |
+
+## LLM Judge
+
+The judge operates as a **post-filter** (not in the search loop):
+
+1. **Translate**: Expression tree → natural language description
+2. **Retrieve**: Tag-match relevant papers from the knowledge base
+3. **Score**: Rate interpretability 0-1 with economic narrative
+
+Calibration: the judge accepts signals with *any* plausible mechanism and only rejects clearly nonsensical expressions. Novelty is not penalized.
+
+**Backend options** (configured in `config/judge_config.yaml`):
+- `agent_sdk` (default): Uses Claude via Max plan subscription — no API costs
+- `api`: Uses Anthropic API directly — for heavier batch workloads
 
 ## Hardware
 
-| | Mac (development) | CUDA (full training) |
+| | Mac (dev) | CUDA (full) |
 |---|---|---|
-| Device | MPS (Apple Silicon) | NVIDIA GPU |
+| Device | MPS | NVIDIA GPU |
 | Universe | 50 symbols | 500 symbols |
-| Data | 3 months | 2+ years |
-| AlphaGen episodes | 1,000 | 50,000+ |
-| AlphaQCM steps | 50,000 | 2,000,000 |
-| Est. training time | 10-30 min | hours-days |
-
-Device is auto-detected via `src/utils/device.py`.
+| AlphaGen | 1,000 steps | 300,000 steps |
+| AlphaQCM | 50,000 steps | 300,000 steps |
 
 ## Key Design Decisions
 
-- **No Qlib dependency**: CryptoStockData replaces Qlib's data loader entirely, producing the same tensor format `(bars, features, stocks)` that AlphaGen's Expression tree expects.
-- **Compatible with both forks**: CryptoAlphaCalculator implements the union of methods needed by upstream AlphaGen's `TensorAlphaCalculator` and AlphaQCM's simpler `AlphaCalculator`.
-- **Target**: 8-bar forward return (`Ref(close, -8) / close - 1`), i.e., 8-hour return for 1H data.
-- **Chronological splits**: Train 70% / Val 15% / Test 15%, no random shuffling.
-
-## CUDA Machine Quick Start (Copy-Paste)
-
-```bash
-# 1. Clone and setup
-git clone https://github.com/Wrigggy/crypto-alpha-mining.git
-cd crypto-alpha-mining
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-pip install gymnasium "sb3_contrib>=2.0" "stable_baselines3>=2.0" shimmy tensorboard
-
-# 2. External repos
-git clone https://github.com/RL-MLDM/alphagen.git external/alphagen
-git clone https://github.com/ZhuZhouFan/AlphaQCM.git external/alphaqcm
-
-# 3. Data pipeline
-python -m src.data_collection.universe_selector
-python -m src.data_collection.binance_fetcher
-python -m src.data_collection.data_cleaner
-
-# 4. Full-scale training
-python -m src.factor_mining.run_alphagen
-python -m src.factor_mining.run_alphaqcm --model iqn --pool 20 --std-lam 1.0
-
-# 5. Results in data/factors/alphagen_pool.json and data/factors/alphaqcm_pool.json
-```
+- **No Qlib dependency for crypto**: CryptoStockData produces the same tensor format AlphaGen expects
+- **Post-filter judge**: LLM scores after search, not during — keeps search fast, enables clean ablation
+- **Tag-based retrieval**: No vector DB — JSON corpus + tag matching is sufficient at research scale
+- **Max plan first**: Claude Agent SDK uses subscription credits, no per-token API costs

@@ -4,8 +4,9 @@ numpy
 pandas
 pyarrow
 scipy
+scikit-learn
 
-# Binance API
+# Binance API (crypto data)
 python-binance
 aiohttp
 
@@ -24,6 +25,15 @@ tensorboard
 # Evaluation & Visualization
 matplotlib
 seaborn
+
+# LLM Judge (Max plan — choose one)
+claude-agent-sdk    # Default: uses Claude via Max subscription
+anthropic           # Optional: direct API fallback
+anyio               # Async support for agent SDK
+
+# Qlib (optional — for CSI500 data)
+# pip install pyqlib
+# python -m qlib.run.get_data qlib_data --target_dir ~/.qlib/qlib_data/cn_data --region cn
 
 # Jupyter
 jupyter
