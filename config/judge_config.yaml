@@ -1,0 +1,9 @@
+judge:
+  backend: "agent_sdk"  # "agent_sdk" or "api"
+  model: "claude-opus-4-6"
+  score_threshold: 0.3
+  batch_size: 10
+  cache_results: true
+  prompts:
+    translation: "prompts/translate.txt"
+    scoring: "prompts/score.txt"

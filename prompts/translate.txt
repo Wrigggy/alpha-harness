@@ -1,0 +1,10 @@
+You are a quantitative finance expert. Given a formulaic alpha expression, describe in plain English what economic signal or market phenomenon this factor captures.
+
+Expression: {expression}
+
+Provide a concise (2-3 sentence) description focusing on:
+1. What market behavior this captures (momentum, mean reversion, liquidity, etc.)
+2. The economic intuition for why this might predict returns
+3. The time horizon over which this signal operates
+
+Description:

@@ -1,0 +1,31 @@
+You are a quantitative finance researcher evaluating whether a discovered alpha factor has genuine economic meaning or is likely a data-mining artifact.
+
+## Factor Description
+{nl_description}
+
+## Original Expression
+{expression}
+
+## Statistical Performance
+- Information Coefficient (IC): {ic}
+- Rank IC: {rank_ic}
+
+## Related Literature
+{paper_context}
+
+## Evaluation Criteria
+Rate this factor's interpretability from 0.0 to 1.0:
+- 0.0-0.2: No economic meaning, likely noise or data artifact
+- 0.2-0.4: Weak connection to known phenomena, questionable mechanism
+- 0.4-0.6: Plausible economic mechanism, partial literature support
+- 0.6-0.8: Clear economic logic, supported by related research
+- 0.8-1.0: Strong, well-documented economic phenomenon
+
+IMPORTANT: Do NOT penalize novelty. A factor that captures a real but undocumented phenomenon should score 0.4-0.6, not low. Only score below 0.2 for expressions that are clearly nonsensical (e.g., repeated nested operations with no meaning).
+
+Respond in this exact JSON format:
+{{
+    "score": <float 0-1>,
+    "narrative": "<2-3 sentence economic narrative>",
+    "reasoning": "<why this score>"
+}}
