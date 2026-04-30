@@ -1,0 +1,25 @@
+{
+  "exprs": [
+    "Div(Greater(0.5,$low),$vwap)",
+    "Max(Sub(1.0,Add(Ref(Std(Mul($vwap,0.5),5d),20d),-2.0)),20d)",
+    "Div(Less(2.0,Greater($vwap,Add(-10.0,Var($open,5d)))),Mul(0.01,$vwap))"
+  ],
+  "weights": [
+    0.07663756362372125,
+    0.05667057006454114,
+    -0.03761813954356636
+  ],
+  "source_pool": "data/factors/alphagen_top50_5k_seed7.json",
+  "filter_split": "val",
+  "filter_mode": "soft",
+  "thresholds": {
+    "min_rank_ic": 0.015,
+    "min_rank_icir": 0.15,
+    "max_turnover": 0.5,
+    "min_decay_halflife": 2,
+    "max_correlation": 0.7,
+    "keep_top_k": 3
+  },
+  "n_input": 7,
+  "n_accepted": 3
+}

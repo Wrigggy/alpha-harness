@@ -1,0 +1,31 @@
+source:
+  name: "qlib"
+  target_horizon: 5
+  bars_per_year: 252
+  panel_dir: "data/equity_panel/csi500_top20_baostock_daily"
+  qlib:
+    instruments: "csi500"
+    start_date: "2024-01-01"
+    end_date: "2024-06-30"
+    dataset: "Alpha158"
+    cache_dir: "data/qlib_cache"
+    provider_uri: "~/.qlib/qlib_data/cn_data"
+    prefer_local_panel: true
+
+data:
+  interval: "1d"
+  lookback_years: 1
+  raw_dir: "data/raw_equity"
+  processed_dir: "data/equity_panel/csi500_top20_baostock_daily"
+  alphagen_format_dir: "data/alphagen_equity_top20_format"
+
+split:
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+returns:
+  - 1
+  - 5
+  - 10
+  - 20

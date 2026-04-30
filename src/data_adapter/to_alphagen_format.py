@@ -352,28 +352,62 @@ def create_data_splits(
         cfg = yaml.safe_load(f)
 
     split_cfg = cfg["split"]
+    source_cfg = cfg.get("source", {}) if isinstance(cfg, dict) else {}
     panel = _load_local_panel(processed_dir, data_config=config_path)
     index = panel["close"].index
 
     n = len(index)
-    if n <= max_backtrack_days + max_future_days + 5:
-        raise ValueError(
-            "Not enough bars to create AlphaGen splits. "
-            f"Need more than {max_backtrack_days + max_future_days + 5}, got {n}."
-        )
     train_end = int(n * split_cfg["train_ratio"])
     val_end = train_end + int(n * split_cfg["val_ratio"])
-    safe_end = lambda idx: min(max(idx, max_backtrack_days + 1), n - 1 - max_future_days)
-    safe_start = min(max_backtrack_days, n - 1 - max_future_days - 2)
 
-    if train_end <= safe_start + max_future_days:
-        train_end = min(n - 2 * max_future_days - 2, max(safe_start + max_future_days + 1, train_end))
+    min_train_bars = 5
+    min_val_bars = 3
+    min_test_bars = 3
+    horizon = int(source_cfg.get("target_horizon", max_future_days))
+    effective_future = min(max_future_days, max(1, horizon))
+
+    max_future_allowed = min(
+        train_end - min_train_bars,
+        (val_end - train_end) - min_val_bars,
+        (n - val_end) - min_test_bars,
+    )
+    effective_future = min(effective_future, max_future_allowed)
+
+    if effective_future < 1:
+        raise ValueError(
+            "Not enough bars to create AlphaGen splits. "
+            f"Need enough room for train/val/test plus future buffer, got {n} bars."
+        )
+
+    max_backtrack_allowed = train_end - effective_future - min_train_bars
+    desired_backtrack = max(1, max(20, train_end // 2))
+    effective_backtrack = min(max_backtrack_days, desired_backtrack, max_backtrack_allowed)
+
+    if effective_backtrack < 1:
+        raise ValueError(
+            "Not enough bars to create AlphaGen splits. "
+            f"Train segment is too short after reserving a future buffer of {effective_future} bars."
+        )
+
+    logger.info(
+        "Adaptive split buffers: requested backtrack={} future={}, effective backtrack={} future={}",
+        max_backtrack_days,
+        max_future_days,
+        effective_backtrack,
+        effective_future,
+    )
+
+    safe_end = lambda idx: min(max(idx, effective_backtrack + 1), n - 1 - effective_future)
+    safe_start = min(effective_backtrack, n - 1 - effective_future - 2)
+
+    if train_end <= safe_start + effective_future:
+        train_end = min(n - 2 * effective_future - 2, max(safe_start + effective_future + 1, train_end))
     if val_end <= train_end + 1:
-        val_end = min(n - max_future_days - 1, train_end + max(2, int(n * split_cfg["val_ratio"])))
+        val_end = min(n - effective_future - 1, train_end + max(2, int(n * split_cfg["val_ratio"])))
 
     splits_def = {
-        "train": (str(index[safe_start]), str(index[train_end - 1 - max_future_days])),
-        "val": (str(index[train_end]), str(index[safe_end(val_end - 1 - max_future_days)])),
+        "train": (str(index[safe_start]), str(index[train_end - 1 - effective_future])),
+        "val": (str(index[train_end]), str(index[safe_end(val_end - 1 - effective_future)])),
         "test": (str(index[val_end]), str(index[safe_end(n - 1)])),
     }
 
@@ -384,8 +418,8 @@ def create_data_splits(
             processed_dir,
             start,
             end,
-            max_backtrack_days=max_backtrack_days,
-            max_future_days=max_future_days,
+            max_backtrack_days=effective_backtrack,
+            max_future_days=effective_future,
             device=device,
             data_config=config_path,
         )

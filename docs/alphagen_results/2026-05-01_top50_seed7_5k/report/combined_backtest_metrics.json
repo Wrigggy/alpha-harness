@@ -1,0 +1,12 @@
+{
+  "total_return": 0.039662819577035435,
+  "annual_return": 0.15505234420782954,
+  "annual_volatility": 0.2268587914793401,
+  "sharpe_ratio": 0.6834751397410581,
+  "max_drawdown": 0.07934098104243573,
+  "calmar_ratio": 1.9542529241590723,
+  "win_rate": 0.4852941176470588,
+  "n_bars": 69,
+  "bars_per_year": 252,
+  "avg_turnover": 0.9021739130434783
+}

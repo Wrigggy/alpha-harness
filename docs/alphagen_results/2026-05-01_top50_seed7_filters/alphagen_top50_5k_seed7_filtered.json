@@ -1,0 +1,19 @@
+{
+  "exprs": [
+    "Div(Greater(0.5,$low),$vwap)"
+  ],
+  "weights": [
+    0.07663756362372125
+  ],
+  "source_pool": "data/factors/alphagen_top50_5k_seed7.json",
+  "filter_split": "val",
+  "thresholds": {
+    "min_rank_ic": 0.02,
+    "min_rank_icir": 0.3,
+    "max_turnover": 0.5,
+    "min_decay_halflife": 2,
+    "max_correlation": 0.7
+  },
+  "n_input": 7,
+  "n_accepted": 1
+}

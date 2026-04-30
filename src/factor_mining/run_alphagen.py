@@ -32,6 +32,7 @@ from alphagen.models.linear_alpha_pool import MseAlphaPool, LinearAlphaPool
 from alphagen.rl.env.wrapper import AlphaEnv
 from alphagen.rl.env.core import AlphaEnvCore
 from alphagen.rl.policy import LSTMSharedNet
+from alphagen.utils import reseed_everything
 
 from sb3_contrib import MaskablePPO
 
@@ -111,9 +112,14 @@ def run_alphagen(
     config_path: str = "config/alphagen_config.yaml",
     data_config_path: str = "config/data_config.yaml",
     small_scale: bool = False,
+    seed: int | None = None,
+    pool_output_path: str | None = None,
 ):
     cfg = load_config(config_path)
     device = get_device(cfg.get("device", "auto"))
+    run_seed = cfg.get("seed", 42) if seed is None else seed
+    reseed_everything(run_seed)
+    logger.info(f"Using random seed: {run_seed}")
 
     if small_scale:
         small = cfg.get("small_scale", {})
@@ -165,7 +171,8 @@ def run_alphagen(
 
     # Output paths
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_path = str(_ROOT / "out" / "results" / f"alphagen_{timestamp}")
+    run_tag = f"seed{run_seed}_{timestamp}"
+    save_path = str(_ROOT / "out" / "results" / f"alphagen_{run_tag}")
     tb_log_dir = str(_ROOT / "out" / "tensorboard")
 
     # Callback for tensorboard logging and checkpoints
@@ -198,6 +205,7 @@ def run_alphagen(
         verbose=1,
         device=device,
         tensorboard_log=tb_log_dir,
+        seed=run_seed,
     )
 
     logger.info(f"Starting AlphaGen PPO: {n_steps} timesteps on {device}")
@@ -210,7 +218,7 @@ def run_alphagen(
     model.learn(
         total_timesteps=n_steps,
         callback=callback,
-        tb_log_name=f"alphagen_{timestamp}",
+        tb_log_name=f"alphagen_{run_tag}",
     )
 
     # Final evaluation
@@ -220,20 +228,21 @@ def run_alphagen(
     logger.info(f"Test IC={test_ic:.4f}, RankIC={test_ric:.4f}")
 
     # Save final results
-    output_dir = Path("data/factors")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = Path(pool_output_path) if pool_output_path is not None else Path("data/factors/alphagen_pool.json")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     pool_state = pool.to_json_dict()
     pool_state["val_ic"] = val_ic
     pool_state["val_ric"] = val_ric
     pool_state["test_ic"] = test_ic
     pool_state["test_ric"] = test_ric
+    pool_state["seed"] = run_seed
     pool_state["timestamp"] = datetime.now().isoformat()
 
-    with open(output_dir / "alphagen_pool.json", "w") as f:
+    with open(output_path, "w") as f:
         json.dump(pool_state, f, indent=2)
 
-    logger.info(f"Pool saved: {pool.size} factors, best IC={pool.best_ic_ret:.4f}")
+    logger.info(f"Pool saved to {output_path}: {pool.size} factors, best IC={pool.best_ic_ret:.4f}")
 
 
 if __name__ == "__main__":
@@ -242,5 +251,7 @@ if __name__ == "__main__":
     parser.add_argument("--small-scale", action="store_true")
     parser.add_argument("--config", default="config/alphagen_config.yaml")
     parser.add_argument("--data-config", default="config/data_config.yaml")
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--pool-output", default=None)
     args = parser.parse_args()
-    run_alphagen(args.config, args.data_config, args.small_scale)
+    run_alphagen(args.config, args.data_config, args.small_scale, args.seed, args.pool_output)
