@@ -1,4 +1,4 @@
-"""Launch AlphaGen (Maskable PPO) training with crypto data.
+"""Launch AlphaGen (Maskable PPO) training with local panel data.
 
 Includes AlphaGen's CustomCallback for tensorboard logging of:
 - pool/size, pool/best_ic_ret, pool/eval_cnt
@@ -35,10 +35,7 @@ from alphagen.rl.policy import LSTMSharedNet
 
 from sb3_contrib import MaskablePPO
 
-from src.data_adapter.to_alphagen_format import (
-    CryptoAlphaCalculator,
-    create_data_splits,
-)
+from src.data_adapter.to_alphagen_format import PanelAlphaCalculator, create_data_splits
 from src.utils.device import get_device
 
 
@@ -58,7 +55,7 @@ class AlphaGenCallback(BaseCallback):
     def __init__(
         self,
         save_path: str,
-        test_calculators: List[CryptoAlphaCalculator],
+        test_calculators: List[PanelAlphaCalculator],
         verbose: int = 0,
     ):
         super().__init__(verbose)
@@ -128,7 +125,13 @@ def run_alphagen(
     # Load data splits
     with open(data_config_path, encoding="utf-8") as f:
         data_cfg = yaml.safe_load(f)
-    processed_dir = data_cfg["data"]["processed_dir"]
+    source_cfg = data_cfg.get("source", {})
+    source_name = source_cfg.get("name", "crypto")
+    processed_dir = (
+        data_cfg["data"]["processed_dir"]
+        if source_name == "crypto"
+        else source_cfg.get("panel_dir", "__qlib__")
+    )
 
     splits = create_data_splits(
         processed_dir, data_config_path, device=device,
@@ -138,14 +141,15 @@ def run_alphagen(
     data_valid = splits["val"]
     data_test = splits["test"]
 
-    # Define target: 8-bar forward return (8 hours for 1H data)
+    # Define target: configurable forward return horizon.
+    horizon = int(source_cfg.get("target_horizon", 8))
     close = Feature(FeatureType.CLOSE)
-    target = Ref(close, -8) / close - 1
+    target = Ref(close, -horizon) / close - 1
 
     # Create calculators
-    train_calc = CryptoAlphaCalculator(data_train, target)
-    valid_calc = CryptoAlphaCalculator(data_valid, target)
-    test_calc = CryptoAlphaCalculator(data_test, target)
+    train_calc = PanelAlphaCalculator(data_train, target)
+    valid_calc = PanelAlphaCalculator(data_valid, target)
+    test_calc = PanelAlphaCalculator(data_test, target)
 
     # Create factor pool
     pool = MseAlphaPool(
@@ -197,6 +201,7 @@ def run_alphagen(
     )
 
     logger.info(f"Starting AlphaGen PPO: {n_steps} timesteps on {device}")
+    logger.info(f"Source: {source_name} | Target horizon: {horizon} bars")
     logger.info(f"Train: {data_train.n_days} bars x {data_train.n_stocks} symbols")
     logger.info(f"Tensorboard: {tb_log_dir}")
     logger.info(f"Checkpoints: {save_path}")

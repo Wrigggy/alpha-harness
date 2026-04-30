@@ -9,6 +9,8 @@ scikit-learn
 # Binance API (crypto data)
 python-binance
 aiohttp
+akshare
+baostock
 
 # Config & Logging
 pyyaml

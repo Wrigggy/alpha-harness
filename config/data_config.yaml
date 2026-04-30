@@ -1,3 +1,16 @@
+# Active source selection
+source:
+  name: "crypto"         # "crypto" or "qlib"
+  target_horizon: 8      # bars ahead used by AlphaGen target
+  bars_per_year: 8760    # 1H crypto default
+  panel_dir: "data/qlib_cache"
+  qlib:
+    instruments: "csi500"
+    start_date: "2020-01-01"
+    end_date: "2023-12-31"
+    dataset: "Alpha158"
+    cache_dir: "data/qlib_cache"
+
 # Binance data settings
 binance:
   base_url: "https://data.binance.vision"  # Public bulk data (no rate limits)

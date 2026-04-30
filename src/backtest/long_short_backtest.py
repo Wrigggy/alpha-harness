@@ -19,6 +19,7 @@ def long_short_backtest(
     min_liquidity_percentile: float = 0.2,
     rebalance_freq: int = 1,
     transaction_cost_bps: float = 5.0,
+    bars_per_year: int = 8760,
 ) -> dict:
     """Run a simple long-short backtest.
 
@@ -34,10 +35,11 @@ def long_short_backtest(
         returns: DataFrame (timestamp x symbols), forward 1H returns.
         n_long: Number of symbols in the long leg.
         n_short: Number of symbols in the short leg.
-        liquidity_filter: Optional DataFrame of liquidity proxy (e.g., quote_volume).
+        liquidity_filter: Optional DataFrame of liquidity proxy (e.g., quote_volume, turnover, ADV).
         min_liquidity_percentile: Filter out symbols below this percentile.
         rebalance_freq: Rebalance every N bars.
         transaction_cost_bps: One-way transaction cost in basis points.
+        bars_per_year: Annualization constant for metrics.
 
     Returns:
         Dict with equity_curve, metrics, weights_history.
@@ -116,7 +118,7 @@ def long_short_backtest(
     equity_curve.name = "equity"
 
     # Compute metrics
-    metrics = compute_metrics(equity_curve)
+    metrics = compute_metrics(equity_curve, bars_per_year=bars_per_year)
 
     # Weights history
     weights_history = pd.DataFrame(weights_records).set_index("date") if weights_records else pd.DataFrame()

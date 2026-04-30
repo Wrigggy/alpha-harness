@@ -1,14 +1,8 @@
-"""Convert Binance crypto data into AlphaGen/AlphaQCM tensor format.
+"""Convert local panel data into AlphaGen/AlphaQCM tensor format.
 
-Provides CryptoStockData as a drop-in replacement for AlphaGen's
-qlib-based StockData. The Expression tree system evaluates directly
-against CryptoStockData.data with shape (total_bars, n_features, n_stocks).
-
-Path management:
-    The caller (run_alphagen.py or run_alphaqcm.py) is responsible for
-    adding the correct external repo to sys.path BEFORE importing this
-    module. This avoids conflicts between the upstream AlphaGen and
-    AlphaQCM's fork.
+This module originally targeted crypto-only OHLCV data. It is now generalized
+to support equity-style panel data as well, while keeping the old public names
+(`CryptoStockData`, `CryptoAlphaCalculator`) as compatibility aliases.
 """
 
 import sys
@@ -22,6 +16,8 @@ import yaml
 from loguru import logger
 
 from src.data_collection.data_cleaner import load_panel
+from src.data_sources.local_panel_source import panel_directory_exists
+from src.data_sources.qlib_source import QlibSource
 
 
 def _ensure_alphagen_path():
@@ -41,19 +37,11 @@ from alphagen.utils.pytorch_utils import normalize_by_day
 from alphagen.utils.correlation import batch_pearsonr, batch_spearmanr
 
 
+DEFAULT_FEATURE_ORDER = ["open", "close", "high", "low", "volume", "vwap"]
 
-class CryptoStockData:
-    """Drop-in replacement for AlphaGen's StockData.
 
-    Loads Binance crypto panel data and exposes the same interface
-    that Expression.evaluate(data) expects.
-
-    Data tensor shape: (total_bars, n_features, n_stocks)
-    where total_bars = max_backtrack_days + n_days + max_future_days
-
-    Feature order follows FeatureType enum:
-        0=OPEN, 1=CLOSE, 2=HIGH, 3=LOW, 4=VOLUME, 5=VWAP
-    """
+class PanelStockData:
+    """Drop-in replacement for AlphaGen's StockData backed by a local panel."""
 
     def __init__(
         self,
@@ -77,10 +65,9 @@ class CryptoStockData:
         if preloaded_data is not None:
             self.data, self._dates, self._stock_ids = preloaded_data
         else:
-            raise ValueError("Use load_crypto_stock_data() factory function")
+            raise ValueError("Use load_panel_stock_data() factory function")
 
-    def __getitem__(self, slc: slice) -> "CryptoStockData":
-        """Get a subview of the data given a date slice or an index slice."""
+    def __getitem__(self, slc: slice) -> "PanelStockData":
         if slc.step is not None:
             raise ValueError("Only support slice with step=None")
         if isinstance(slc.start, str):
@@ -94,7 +81,7 @@ class CryptoStockData:
         data = self.data[idx_range]
         remaining = data.isnan().reshape(-1, data.shape[-1]).all(dim=0).logical_not().nonzero().flatten()
         data = data[:, :, remaining]
-        return CryptoStockData(
+        return PanelStockData(
             instrument=self._instrument,
             start_time=self._dates[start + self.max_backtrack_days].strftime("%Y-%m-%d %H:%M"),
             end_time=self._dates[stop - 1 - self.max_future_days].strftime("%Y-%m-%d %H:%M"),
@@ -147,38 +134,70 @@ class CryptoStockData:
             data = data.unsqueeze(2)
         if columns is None:
             columns = [str(i) for i in range(data.shape[2])]
-        n_days, n_stocks, n_columns = data.shape
+        _, _, n_columns = data.shape
         if self.max_future_days == 0:
             date_index = self._dates[self.max_backtrack_days:]
         else:
             date_index = self._dates[self.max_backtrack_days:-self.max_future_days]
         index = pd.MultiIndex.from_product([date_index, self._stock_ids])
-        data = data.reshape(-1, n_columns)
-        return pd.DataFrame(data.detach().cpu().numpy(), index=index, columns=columns)
+        reshaped = data.reshape(-1, n_columns)
+        return pd.DataFrame(reshaped.detach().cpu().numpy(), index=index, columns=columns)
 
 
-def load_crypto_stock_data(
+def _build_vwap(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    if "vwap" in panel:
+        return panel["vwap"]
+    if "quote_volume" in panel and "volume" in panel:
+        return panel["quote_volume"] / panel["volume"].replace(0, np.nan)
+    return (panel["high"] + panel["low"] + panel["close"]) / 3.0
+
+
+def _load_local_panel(processed_dir: str, data_config: str | None = None) -> dict[str, pd.DataFrame]:
+    path = Path(processed_dir)
+    if panel_directory_exists(path):
+        return load_panel(processed_dir)
+
+    if data_config is not None and Path(data_config).exists():
+        with open(data_config, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        source_cfg = cfg.get("source", {}) if isinstance(cfg, dict) else {}
+        source_name = source_cfg.get("name", "crypto")
+        panel_dir = source_cfg.get("panel_dir")
+        if panel_dir and panel_directory_exists(panel_dir):
+            return load_panel(panel_dir)
+        if source_name == "qlib":
+            qcfg = source_cfg.get("qlib", {})
+            source = QlibSource(
+                instruments=qcfg.get("instruments", "csi500"),
+                start_date=qcfg.get("start_date", "2020-01-01"),
+                end_date=qcfg.get("end_date", "2023-12-31"),
+                dataset=qcfg.get("dataset", "Alpha158"),
+                cache_dir=qcfg.get("cache_dir", "data/qlib_cache"),
+                provider_uri=qcfg.get("provider_uri"),
+                fallback_panel_dir=panel_dir,
+                prefer_local_panel=bool(qcfg.get("prefer_local_panel", False)),
+            )
+            return source.load_panel()
+
+    raise FileNotFoundError(f"Panel source not found: {processed_dir}")
+
+
+def load_panel_stock_data(
     processed_dir: str,
     start_time: str,
     end_time: str,
     max_backtrack_days: int = 100,
     max_future_days: int = 5,
     device: torch.device = torch.device("cpu"),
-) -> CryptoStockData:
-    """Factory: load crypto data into CryptoStockData.
-
-    Uses RAW OHLCV data (not pre-normalized). AlphaGen's Expression system
-    and normalize_by_day() handle normalization internally. Pre-normalizing
-    causes double-normalization and inflated IC values.
-    """
-    panel = load_panel(processed_dir)
-
-    # Compute VWAP from raw data (quote_volume / volume = average price)
-    vwap = panel["quote_volume"] / panel["volume"].replace(0, np.nan)
+    data_config: str | None = None,
+) -> PanelStockData:
+    """Factory: load generic panel data into AlphaGen-compatible StockData."""
+    panel = _load_local_panel(processed_dir, data_config=data_config)
+    vwap = _build_vwap(panel)
 
     full_index = panel["close"].index
-    start_ts = pd.Timestamp(start_time, tz="UTC") if full_index.tz else pd.Timestamp(start_time)
-    end_ts = pd.Timestamp(end_time, tz="UTC") if full_index.tz else pd.Timestamp(end_time)
+    start_ts = pd.Timestamp(start_time, tz="UTC") if getattr(full_index, "tz", None) else pd.Timestamp(start_time)
+    end_ts = pd.Timestamp(end_time, tz="UTC") if getattr(full_index, "tz", None) else pd.Timestamp(end_time)
 
     core_mask = (full_index >= start_ts) & (full_index <= end_ts)
     core_positions = np.where(core_mask)[0]
@@ -187,7 +206,6 @@ def load_crypto_stock_data(
 
     core_start = core_positions[0]
     core_end = core_positions[-1]
-
     buf_start = max(0, core_start - max_backtrack_days)
     buf_end = min(len(full_index) - 1, core_end + max_future_days)
 
@@ -196,19 +214,19 @@ def load_crypto_stock_data(
 
     if actual_future < max_future_days:
         logger.warning(
-            f"Requested future buffer {max_future_days} but only {actual_future} bars available. "
-            f"Target expressions needing forward data may fail. Consider ending the split earlier."
+            "Requested future buffer {} but only {} bars available",
+            max_future_days,
+            actual_future,
         )
     if actual_backtrack < max_backtrack_days:
         logger.warning(
-            f"Requested backtrack buffer {max_backtrack_days} but only {actual_backtrack} bars available."
+            "Requested backtrack buffer {} but only {} bars available",
+            max_backtrack_days,
+            actual_backtrack,
         )
 
     selected_index = full_index[buf_start:buf_end + 1]
     symbols = list(panel["close"].columns)
-
-    # Build tensor: (total_bars, n_features, n_stocks)
-    # Use RAW values — AlphaGen's normalize_by_day handles cross-sectional normalization
     raw_fields = {
         "open": panel["open"],
         "close": panel["close"],
@@ -217,26 +235,23 @@ def load_crypto_stock_data(
         "volume": panel["volume"],
         "vwap": vwap,
     }
-    # Feature order matches FeatureType enum: OPEN=0, CLOSE=1, HIGH=2, LOW=3, VOLUME=4, VWAP=5
-    feature_order = ["open", "close", "high", "low", "volume", "vwap"]
-    arrays = []
-    for fname in feature_order:
-        arrays.append(raw_fields[fname].loc[selected_index].values.astype(np.float32))
 
-    stacked = np.stack(arrays, axis=0)           # (6, total_bars, n_stocks)
-    stacked = np.transpose(stacked, (1, 0, 2))   # (total_bars, 6, n_stocks)
-    # Keep NaN for missing data — AlphaGen's normalize_by_day masks NaN correctly.
-    # Replacing with 0.0 would corrupt price signals (0 price → -100% return artifacts).
-
+    arrays = [raw_fields[name].loc[selected_index].values.astype(np.float32) for name in DEFAULT_FEATURE_ORDER]
+    stacked = np.stack(arrays, axis=0)
+    stacked = np.transpose(stacked, (1, 0, 2))
     data_tensor = torch.tensor(stacked, dtype=torch.float32, device=device)
 
     n_days = len(selected_index) - actual_backtrack - actual_future
     logger.info(
-        f"CryptoStockData: {n_days} bars x {len(symbols)} symbols x {len(feature_order)} features "
-        f"(backtrack={actual_backtrack}, future={actual_future})"
+        "PanelStockData: {} bars x {} symbols x {} features (backtrack={}, future={})",
+        n_days,
+        len(symbols),
+        len(DEFAULT_FEATURE_ORDER),
+        actual_backtrack,
+        actual_future,
     )
 
-    return CryptoStockData(
+    return PanelStockData(
         instrument="all",
         start_time=start_time,
         end_time=end_time,
@@ -248,35 +263,30 @@ def load_crypto_stock_data(
     )
 
 
-class CryptoAlphaCalculator:
-    """Calculator compatible with BOTH upstream AlphaGen and AlphaQCM's fork.
+class PanelAlphaCalculator:
+    """Calculator compatible with AlphaGen and AlphaQCM tensor interfaces."""
 
-    Implements the union of methods required by:
-    - alphagen (upstream): TensorAlphaCalculator interface
-    - alphaqcm: simpler AlphaCalculator interface
-    Both call calc_single_IC_ret, calc_mutual_IC, calc_pool_IC_ret, calc_pool_rIC_ret.
-    Upstream additionally calls calc_pool_all_ret, calc_single_rIC_ret, etc.
-    """
-
-    def __init__(self, data: CryptoStockData, target: Optional[Expression] = None):
+    def __init__(self, data: PanelStockData, target: Optional[Expression] = None):
         self.data = data
-        if target is not None:
-            self.target_value = normalize_by_day(target.evaluate(data))
-        else:
-            self.target_value = None
+        self.target_value = normalize_by_day(target.evaluate(data)) if target is not None else None
 
     def _calc_alpha(self, expr: Expression) -> torch.Tensor:
         return normalize_by_day(expr.evaluate(self.data))
 
-    # --- Required by both upstream and QCM ---
+    def _empty_alpha(self) -> torch.Tensor:
+        if self.target_value is not None:
+            return torch.zeros_like(self.target_value)
+        return torch.zeros(
+            (self.data.n_days, self.data.n_stocks),
+            dtype=torch.float32,
+            device=self.data.device,
+        )
 
     def calc_single_IC_ret(self, expr: Expression) -> float:
-        value = self._calc_alpha(expr)
-        return batch_pearsonr(value, self.target_value).mean().item()
+        return batch_pearsonr(self._calc_alpha(expr), self.target_value).mean().item()
 
     def calc_single_rIC_ret(self, expr: Expression) -> float:
-        value = self._calc_alpha(expr)
-        return batch_spearmanr(value, self.target_value).mean().item()
+        return batch_spearmanr(self._calc_alpha(expr), self.target_value).mean().item()
 
     def calc_single_all_ret(self, expr: Expression) -> Tuple[float, float]:
         value = self._calc_alpha(expr)
@@ -285,29 +295,29 @@ class CryptoAlphaCalculator:
         return ic, ric
 
     def calc_mutual_IC(self, expr1: Expression, expr2: Expression) -> float:
-        v1, v2 = self._calc_alpha(expr1), self._calc_alpha(expr2)
-        return batch_pearsonr(v1, v2).mean().item()
+        return batch_pearsonr(self._calc_alpha(expr1), self._calc_alpha(expr2)).mean().item()
 
     def make_ensemble_alpha(self, exprs, weights) -> torch.Tensor:
+        if len(exprs) == 0:
+            return self._empty_alpha()
         factors = [self._calc_alpha(exprs[i]) * weights[i] for i in range(len(exprs))]
         return torch.sum(torch.stack(factors, dim=0), dim=0)
 
     def calc_pool_IC_ret(self, exprs, weights) -> float:
         with torch.no_grad():
-            value = self.make_ensemble_alpha(exprs, weights)
-            return batch_pearsonr(value, self.target_value).mean().item()
+            return batch_pearsonr(self.make_ensemble_alpha(exprs, weights), self.target_value).mean().item()
 
     def calc_pool_rIC_ret(self, exprs, weights) -> float:
         with torch.no_grad():
-            value = self.make_ensemble_alpha(exprs, weights)
-            return batch_spearmanr(value, self.target_value).mean().item()
+            return batch_spearmanr(self.make_ensemble_alpha(exprs, weights), self.target_value).mean().item()
 
     def calc_pool_all_ret(self, exprs, weights) -> Tuple[float, float]:
         with torch.no_grad():
             value = self.make_ensemble_alpha(exprs, weights)
-            ic = batch_pearsonr(value, self.target_value).mean().item()
-            ric = batch_spearmanr(value, self.target_value).mean().item()
-            return ic, ric
+            return (
+                batch_pearsonr(value, self.target_value).mean().item(),
+                batch_spearmanr(value, self.target_value).mean().item(),
+            )
 
     def calc_pool_all_ret_with_ir(self, exprs, weights) -> Tuple[float, float, float, float]:
         with torch.no_grad():
@@ -317,8 +327,6 @@ class CryptoAlphaCalculator:
             ic_mean, ic_std = ics.mean().item(), ics.std().item()
             ric_mean, ric_std = rics.mean().item(), rics.std().item()
             return ic_mean, ic_mean / ic_std, ric_mean, ric_mean / ric_std
-
-    # --- Required by upstream's TensorAlphaCalculator interface ---
 
     def evaluate_alpha(self, expr: Expression) -> torch.Tensor:
         return self._calc_alpha(expr)
@@ -339,27 +347,30 @@ def create_data_splits(
     max_backtrack_days: int = 100,
     max_future_days: int = 5,
 ) -> dict:
-    """Create train/val/test CryptoStockData splits."""
+    """Create train/val/test PanelStockData splits."""
     with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     split_cfg = cfg["split"]
-    panel = load_panel(processed_dir)
+    panel = _load_local_panel(processed_dir, data_config=config_path)
     index = panel["close"].index
 
     n = len(index)
+    if n <= max_backtrack_days + max_future_days + 5:
+        raise ValueError(
+            "Not enough bars to create AlphaGen splits. "
+            f"Need more than {max_backtrack_days + max_future_days + 5}, got {n}."
+        )
     train_end = int(n * split_cfg["train_ratio"])
     val_end = train_end + int(n * split_cfg["val_ratio"])
+    safe_end = lambda idx: min(max(idx, max_backtrack_days + 1), n - 1 - max_future_days)
+    safe_start = min(max_backtrack_days, n - 1 - max_future_days - 2)
 
-    # End each split early enough to leave room for max_future_days buffer.
-    # The target expression Ref(close, -8) looks 8 bars ahead.
-    safe_end = lambda idx: min(idx, n - 1 - max_future_days)
+    if train_end <= safe_start + max_future_days:
+        train_end = min(n - 2 * max_future_days - 2, max(safe_start + max_future_days + 1, train_end))
+    if val_end <= train_end + 1:
+        val_end = min(n - max_future_days - 1, train_end + max(2, int(n * split_cfg["val_ratio"])))
 
-    # Start train after backtrack buffer so rolling operators have enough history.
-    safe_start = max_backtrack_days
-
-    # Leave a gap of max_future_days between each split's core end and the
-    # next split's start, so the target doesn't peek across split boundaries.
     splits_def = {
         "train": (str(index[safe_start]), str(index[train_end - 1 - max_future_days])),
         "val": (str(index[train_end]), str(index[safe_end(val_end - 1 - max_future_days)])),
@@ -368,11 +379,20 @@ def create_data_splits(
 
     splits = {}
     for name, (start, end) in splits_def.items():
-        logger.info(f"{name}: {start} -> {end}")
-        splits[name] = load_crypto_stock_data(
-            processed_dir, start, end,
+        logger.info("{}: {} -> {}", name, start, end)
+        splits[name] = load_panel_stock_data(
+            processed_dir,
+            start,
+            end,
             max_backtrack_days=max_backtrack_days,
             max_future_days=max_future_days,
             device=device,
+            data_config=config_path,
         )
     return splits
+
+
+# Backward-compatible aliases for existing imports.
+CryptoStockData = PanelStockData
+CryptoAlphaCalculator = PanelAlphaCalculator
+load_crypto_stock_data = load_panel_stock_data

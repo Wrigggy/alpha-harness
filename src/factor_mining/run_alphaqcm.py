@@ -1,4 +1,4 @@
-"""Launch AlphaQCM (distributional RL) training with crypto data.
+"""Launch AlphaQCM (distributional RL) training with local panel data.
 
 AlphaQCM uses its own fork of AlphaGen in external/alphaqcm/alphagen/.
 We use that fork's AlphaPool and the QCM agents from fqf_iqn_qrdqn/.
@@ -53,7 +53,7 @@ from alphagen.rl.env.wrapper import AlphaEnv
 from fqf_iqn_qrdqn.agent import QRQCMAgent, IQCMAgent, FQCMAgent
 
 from src.data_adapter.to_alphagen_format import (
-    CryptoAlphaCalculator,
+    PanelAlphaCalculator,
     create_data_splits,
 )
 from src.utils.device import get_device
@@ -62,6 +62,17 @@ from src.utils.device import get_device
 def load_config(path: str = "config/alphaqcm_config.yaml") -> dict:
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _normalize_test_result(result) -> tuple[float, float]:
+    """Handle different AlphaPool.test_ensemble return signatures across forks."""
+    if isinstance(result, tuple):
+        if len(result) == 0:
+            return 0.0, 0.0
+        if len(result) == 1:
+            return float(result[0]), 0.0
+        return float(result[0]), float(result[1])
+    return float(result), 0.0
 
 
 def run_alphaqcm(
@@ -96,20 +107,27 @@ def run_alphaqcm(
     # Load data
     with open(data_config_path, encoding="utf-8") as f:
         data_cfg = yaml.safe_load(f)
-    processed_dir = data_cfg["data"]["processed_dir"]
+    source_cfg = data_cfg.get("source", {})
+    source_name = source_cfg.get("name", "crypto")
+    processed_dir = (
+        data_cfg["data"]["processed_dir"]
+        if source_name == "crypto"
+        else source_cfg.get("panel_dir", "__qlib__")
+    )
 
     splits = create_data_splits(
         processed_dir, data_config_path, device=device,
         max_backtrack_days=100, max_future_days=10,
     )
 
-    # Target: 8-bar forward return (8 hours for 1H data)
+    # Target: configurable forward return horizon.
+    horizon = int(source_cfg.get("target_horizon", 8))
     close = Feature(FeatureType.CLOSE)
-    target = Ref(close, -8) / close - 1
+    target = Ref(close, -horizon) / close - 1
 
-    train_calc = CryptoAlphaCalculator(splits["train"], target)
-    valid_calc = CryptoAlphaCalculator(splits["val"], target)
-    test_calc = CryptoAlphaCalculator(splits["test"], target)
+    train_calc = PanelAlphaCalculator(splits["train"], target)
+    valid_calc = PanelAlphaCalculator(splits["val"], target)
+    test_calc = PanelAlphaCalculator(splits["test"], target)
 
     # AlphaQCM's own AlphaPool
     pool = AlphaPool(
@@ -148,6 +166,7 @@ def run_alphaqcm(
     )
 
     logger.info(f"Starting AlphaQCM ({model_type}): {agent_config['num_steps']} steps on {device}")
+    logger.info(f"Source: {source_name} | Target horizon: {horizon} bars")
     logger.info(f"Train: {splits['train'].n_days} bars x {splits['train'].n_stocks} symbols")
     logger.info(f"Tensorboard: {log_dir}")
 
@@ -159,8 +178,8 @@ def run_alphaqcm(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     pool_state = pool.to_dict()
-    val_ic, val_ric = pool.test_ensemble(valid_calc)
-    test_ic, test_ric = pool.test_ensemble(test_calc)
+    val_ic, val_ric = _normalize_test_result(pool.test_ensemble(valid_calc))
+    test_ic, test_ric = _normalize_test_result(pool.test_ensemble(test_calc))
 
     pool_state["val_ic"] = val_ic
     pool_state["val_ric"] = val_ric

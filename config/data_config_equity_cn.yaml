@@ -1,0 +1,33 @@
+# Equity-style local research config aligned with WorldQuant-style daily stock factors.
+
+source:
+  name: "qlib"                # keep qlib compatibility, but local panel is preferred
+  target_horizon: 5           # 5 trading days forward return
+  bars_per_year: 252          # daily trading bars
+  panel_dir: "data/equity_panel/csi500_daily"
+  qlib:
+    instruments: "csi500"
+    start_date: "2018-01-01"
+    end_date: "2024-12-31"
+    dataset: "Alpha158"
+    cache_dir: "data/qlib_cache"
+    provider_uri: "~/.qlib/qlib_data/cn_data"
+    prefer_local_panel: true
+
+data:
+  interval: "1d"
+  lookback_years: 6
+  raw_dir: "data/raw_equity"
+  processed_dir: "data/equity_panel/csi500_daily"
+  alphagen_format_dir: "data/alphagen_equity_format"
+
+split:
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+returns:
+  - 1
+  - 5
+  - 10
+  - 20

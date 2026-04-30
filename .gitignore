@@ -1,7 +1,7 @@
 # Data
-data/raw/
-data/processed/
-data/alphagen_format/
+data/
+out/
+tmp_equity_sample/
 
 # External repos
 external/
@@ -14,6 +14,8 @@ __pycache__/
 dist/
 build/
 .eggs/
+.venv/
+.venv312/
 
 # Jupyter
 .ipynb_checkpoints/

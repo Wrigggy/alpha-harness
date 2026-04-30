@@ -3,11 +3,10 @@
 import numpy as np
 import pandas as pd
 
-# 1H bars per year (365 * 24)
-BARS_PER_YEAR = 8760
+DEFAULT_BARS_PER_YEAR = 8760
 
 
-def compute_metrics(equity_curve: pd.Series) -> dict:
+def compute_metrics(equity_curve: pd.Series, bars_per_year: int = DEFAULT_BARS_PER_YEAR) -> dict:
     """Compute comprehensive performance metrics from an equity curve.
 
     Args:
@@ -21,10 +20,10 @@ def compute_metrics(equity_curve: pd.Series) -> dict:
     # Annualized return
     total_return = equity_curve.iloc[-1] / equity_curve.iloc[0] - 1
     n_bars = len(equity_curve)
-    annual_return = (1 + total_return) ** (BARS_PER_YEAR / max(n_bars - 1, 1)) - 1
+    annual_return = (1 + total_return) ** (bars_per_year / max(n_bars - 1, 1)) - 1
 
     # Annualized volatility
-    annual_vol = returns.std() * np.sqrt(BARS_PER_YEAR)
+    annual_vol = returns.std() * np.sqrt(bars_per_year)
 
     # Sharpe ratio (assuming 0 risk-free rate for crypto)
     sharpe = annual_return / annual_vol if annual_vol > 0 else 0.0
@@ -49,6 +48,7 @@ def compute_metrics(equity_curve: pd.Series) -> dict:
         "calmar_ratio": calmar,
         "win_rate": win_rate,
         "n_bars": n_bars,
+        "bars_per_year": bars_per_year,
     }
 
 
