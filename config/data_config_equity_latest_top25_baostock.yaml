@@ -1,0 +1,23 @@
+source:
+  name: "panel"
+  target_horizon: 5
+  bars_per_year: 252
+  panel_dir: "data/equity_panel/csi500_latest_top25_baostock_brain_daily"
+
+data:
+  interval: "1d"
+  lookback_years: 5
+  raw_dir: "data/raw_equity"
+  processed_dir: "data/equity_panel/csi500_latest_top25_baostock_brain_daily"
+  alphagen_format_dir: "data/alphagen_equity_latest_top25_format"
+
+split:
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+returns:
+  - 1
+  - 5
+  - 10
+  - 20

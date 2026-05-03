@@ -24,7 +24,8 @@ from alphagen.data.parser import parse_expression
 
 from src.data_adapter.to_alphagen_format import PanelAlphaCalculator, _load_local_panel, create_data_splits
 from src.evaluation.validation_gate import ValidationConfig, ValidationGate
-from src.pipeline import load_pool, normalize_weights, tensor_to_factor_frame
+from src.pipeline import tensor_to_factor_frame
+from src.utils.pool_io import load_pool, normalize_weights, orient_expression, score_to_weight
 
 
 def load_data_config(path: str) -> dict:
@@ -92,11 +93,17 @@ def soft_filter_pool(
     for expr_str, expr, weight in zip(expr_strings, parsed_exprs, weights):
         factor_df = tensor_to_factor_frame(stock_data, calculator.evaluate_alpha(expr), "factor")
         result = gate.validate(factor_df, forward_returns, existing_pool=[])
-        score = abs(result.metrics.get("rank_ic", 0.0)) + 0.5 * abs(result.metrics.get("rank_icir", 0.0))
+        oriented_expr, direction = orient_expression(expr_str, result.metrics.get("rank_ic", 0.0))
+        score = score_to_weight(
+            result.metrics.get("rank_ic", 0.0),
+            result.metrics.get("rank_icir", 0.0),
+        )
         candidates.append(
             {
                 "expression": expr_str,
+                "selected_expression": oriented_expr,
                 "weight": weight,
+                "direction": direction,
                 "frame": factor_df,
                 "passed": result.passed,
                 "score": score,
@@ -134,8 +141,8 @@ def soft_filter_pool(
         selected = candidates[:keep_top_k]
 
     output = {
-        "exprs": [item["expression"] for item in selected],
-        "weights": [item["weight"] for item in selected],
+        "exprs": [item["selected_expression"] for item in selected],
+        "weights": normalize_weights([score_to_weight(item.get("rank_ic", 0.0), item.get("rank_icir", 0.0)) for item in selected]),
         "source_pool": pool_path,
         "filter_split": split,
         "filter_mode": "soft",

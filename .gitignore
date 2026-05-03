@@ -1,7 +1,19 @@
 # Data
-data/
-out/
+data/*
+out/*
 tmp_equity_sample/
+.cache/
+
+# Keep empty structure docs only
+!data/
+!data/README.md
+!data/.gitkeep
+!out/
+!out/README.md
+!out/.gitkeep
+
+# Generated docs
+docs/alphagen_results/
 
 # External repos
 external/
@@ -37,3 +49,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# OS / temp
+tmp/
+temp/

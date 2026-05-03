@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from loguru import logger
+import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTERNAL_ALPHAGEN = ROOT / "external" / "alphagen"
@@ -25,7 +26,13 @@ if str(EXTERNAL_ALPHAGEN) not in sys.path:
 from alphagen.data.expression import Feature, FeatureType, Ref
 from alphagen.data.parser import parse_expression
 
-from src.backtest.long_short_backtest import long_short_backtest, plot_backtest
+from src.backtest.long_short_backtest import (
+    long_short_backtest,
+    plot_backtest,
+    plot_worldquant_style_panels,
+)
+from src.brain_proxy.expression_translation import BrainExpressionTranslator
+from src.brain_proxy.expression_translation import build_brain_variants, render_brain_submission_template
 from src.data_adapter.to_alphagen_format import (
     PanelAlphaCalculator,
     _load_local_panel,
@@ -42,6 +49,7 @@ from src.knowledge_base.paper_store import PaperStore
 from src.knowledge_base.retriever import PaperRetriever
 from src.llm_judge.base import JudgeResult
 from src.portfolio.combiner import EqualWeightCombiner, ICWeightedCombiner, RidgeCombiner
+from src.utils.pool_io import load_pool, normalize_weights
 
 
 def load_judge(config_path: str = "config/judge_config.yaml"):
@@ -52,17 +60,28 @@ def load_judge(config_path: str = "config/judge_config.yaml"):
             cfg = yaml.safe_load(f)
         judge_cfg = cfg.get("judge", {})
     else:
-        judge_cfg = {"backend": "agent_sdk", "model": "claude-opus-4-6"}
+        judge_cfg = {"backend": "api", "provider": "openai", "model": "gpt-5-mini"}
 
-    backend = judge_cfg.get("backend", "agent_sdk")
-    model = judge_cfg.get("model", "claude-opus-4-6")
+    backend = str(judge_cfg.get("backend", "agent_sdk")).lower()
+    model = judge_cfg.get("model", "gpt-5-mini")
 
-    if backend == "agent_sdk":
+    if backend in {"agent_sdk", "claude"}:
         from src.llm_judge.claude_agent_judge import ClaudeAgentJudge
         return ClaudeAgentJudge(model=model)
-    if backend == "api":
+    if backend in {"api", "openai", "deepseek", "codex"}:
         from src.llm_judge.api_judge import ApiJudge
-        return ApiJudge(model=model)
+        provider = str(judge_cfg.get("provider", "openai")).lower()
+        if backend != "api":
+            provider = backend
+        return ApiJudge(
+            provider=provider,
+            model=model,
+            max_tokens=int(judge_cfg.get("max_tokens", 1024)),
+            base_url=judge_cfg.get("base_url"),
+            api_key_env=judge_cfg.get("api_key_env"),
+            translate_prompt_path=judge_cfg.get("prompts", {}).get("translation", "prompts/translate.txt"),
+            score_prompt_path=judge_cfg.get("prompts", {}).get("scoring", "prompts/score.txt"),
+        )
     raise ValueError(f"Unknown judge backend: {backend}")
 
 
@@ -102,37 +121,6 @@ def get_data_source(source: str, data_cfg: dict):
             prefer_local_panel=bool(qcfg.get("prefer_local_panel", False)),
         )
     raise ValueError(f"Unknown source: {source}")
-
-
-def load_pool(pool_path: str) -> tuple[list[str], list[float]]:
-    with open(pool_path, encoding="utf-8") as f:
-        pool_data = json.load(f)
-
-    if isinstance(pool_data, list):
-        expressions = [str(item.get("expression", "")) for item in pool_data]
-        weights = [float(item.get("weight", item.get("ic", 1.0))) for item in pool_data]
-        return expressions, weights
-
-    if isinstance(pool_data, dict):
-        if "exprs" in pool_data:
-            expressions = [str(expr) for expr in pool_data["exprs"]]
-            weights = [float(w) for w in pool_data.get("weights", [1.0] * len(expressions))]
-            return expressions, weights
-        if "expressions" in pool_data:
-            expressions = [str(expr) for expr in pool_data["expressions"]]
-            weights = [float(w) for w in pool_data.get("weights", [1.0] * len(expressions))]
-            return expressions, weights
-
-    raise ValueError(f"Unrecognized pool format: {pool_path}")
-
-
-def normalize_weights(weights: list[float]) -> list[float]:
-    if not weights:
-        return []
-    total = sum(abs(w) for w in weights)
-    if total == 0:
-        return [1.0 / len(weights)] * len(weights)
-    return [w / total for w in weights]
 
 
 def tensor_to_factor_frame(stock_data, tensor: object, name: str) -> pd.DataFrame:
@@ -211,6 +199,7 @@ def run_pipeline(
     data_config_path: str = "config/data_config.yaml",
     split: str = "test",
     output_dir: str = "out/pipeline_results",
+    backtest_years: int = 5,
 ):
     """Run the alpha pipeline on a pre-computed expression pool."""
     if pool_path is None:
@@ -248,6 +237,7 @@ def run_pipeline(
 
     expressions, raw_weights = load_pool(pool_path)
     weights = normalize_weights(raw_weights)
+    translator = BrainExpressionTranslator()
     logger.info("Step 3: Loaded {} expressions from {}", len(expressions), pool_path)
 
     target_expr = Ref(Feature(FeatureType.CLOSE), -horizon) / Feature(FeatureType.CLOSE) - 1
@@ -262,6 +252,7 @@ def run_pipeline(
 
     factor_frames: dict[str, pd.DataFrame] = {}
     factor_metrics: list[dict] = []
+    translation_rows: list[dict] = []
 
     logger.info("Step 4: Evaluating factor expressions on {} split", split)
     for idx, (expr_str, expr, weight) in enumerate(zip(expressions, parsed_exprs, weights), start=1):
@@ -269,15 +260,26 @@ def run_pipeline(
         factor_df = tensor_to_factor_frame(stock_data, calculator.evaluate_alpha(expr), factor_name)
         factor_frames[expr_str] = factor_df
         metrics = evaluate_factor(factor_df, forward_returns, min_observations=max(2, min(10, factor_df.shape[1])))
+        translation = translator.translate(expr)
         factor_metrics.append(
             {
                 "name": factor_name,
                 "expression": expr_str,
+                "worldquant_expression": translation.worldquant_expression,
                 "weight": weight,
                 "ic": metrics.ic_mean,
                 "rank_ic": metrics.rank_ic_mean,
                 "icir": metrics.icir,
                 "rank_icir": metrics.rank_icir,
+            }
+        )
+        translation_rows.append(
+            {
+                "name": factor_name,
+                "expression": expr_str,
+                "worldquant_expression": translation.worldquant_expression,
+                "translation_supported": translation.supported,
+                "translation_notes": " | ".join(translation.notes),
             }
         )
 
@@ -335,6 +337,12 @@ def run_pipeline(
         min_observations=max(2, min(10, combined_signal.shape[1])),
     )
 
+    if backtest_years and backtest_years > 0:
+        cutoff = pd.to_datetime(combined_signal.index.max()) - pd.DateOffset(years=backtest_years)
+        combined_signal = combined_signal.loc[pd.to_datetime(combined_signal.index) >= cutoff]
+        next_bar_returns = next_bar_returns.loc[combined_signal.index, combined_signal.columns]
+        liquidity_df = liquidity_df.loc[combined_signal.index, combined_signal.columns]
+
     n_leg = max(1, combined_signal.shape[1] // 3)
     backtest = long_short_backtest(
         combined_signal,
@@ -349,12 +357,40 @@ def run_pipeline(
     logger.info("Step 7: Saving outputs")
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    submit_dir = out_dir / "submit_ready_worldquant"
+    submit_dir.mkdir(parents=True, exist_ok=True)
 
     pd.DataFrame(factor_metrics).to_csv(out_dir / "factor_metrics.csv", index=False)
+    pd.DataFrame(translation_rows).to_csv(out_dir / "worldquant_expression_map.csv", index=False)
     pd.DataFrame(validation_rows).to_csv(out_dir / "validation_results.csv", index=False)
     combined_decay.to_csv(out_dir / "combined_decay.csv", index=False)
     combined_signal.to_csv(out_dir / "combined_signal.csv")
     backtest["equity_curve"].to_csv(out_dir / "combined_equity_curve.csv", header=True)
+    backtest["daily_metrics"].to_csv(out_dir / "combined_backtest_daily.csv", index=True)
+    backtest["yearly_metrics"].to_csv(out_dir / "combined_backtest_yearly.csv", index=False)
+    pd.DataFrame(
+        [{"metric": k, "value": v} for k, v in backtest["aggregate_metrics"].items() if k != "Years"]
+    ).to_csv(out_dir / "aggregate_data.csv", index=False)
+    backtest["yearly_metrics"].to_csv(out_dir / "yearly_data.csv", index=False)
+
+    variant_rows: list[dict] = []
+    for row in translation_rows:
+        template = render_brain_submission_template(
+            alpha_name=row["name"],
+            base_expression=row["worldquant_expression"],
+            local_expression=row["expression"],
+        )
+        (submit_dir / f"{row['name']}.txt").write_text(template, encoding="utf-8")
+        for variant in build_brain_variants(row["worldquant_expression"]):
+            variant_rows.append(
+                {
+                    "name": row["name"],
+                    "variant": variant.label,
+                    "expression": variant.expression,
+                    "notes": " | ".join(variant.notes),
+                }
+            )
+    pd.DataFrame(variant_rows).to_csv(out_dir / "brain_expression_variants.csv", index=False)
 
     fig = plot_backtest(
         backtest["equity_curve"],
@@ -362,6 +398,14 @@ def run_pipeline(
         title=f"Pipeline Backtest ({source_name}, {split})",
     )
     fig.savefig(out_dir / "combined_backtest.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    fig = plot_worldquant_style_panels(
+        backtest["daily_metrics"],
+        title=f"Pipeline WorldQuant-Style Panels ({source_name}, {split})",
+    )
+    fig.savefig(out_dir / "combined_worldquant_panels.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     summary = {
         "source": source_name,
@@ -374,6 +418,7 @@ def run_pipeline(
         "n_accepted": len(accepted_frames),
         "accepted_expressions": accepted_exprs,
         "combiner": combiner_type,
+        "backtest_years": backtest_years,
         "combined_metrics": {
             "ic": combined_metrics.ic_mean,
             "rank_ic": combined_metrics.rank_ic_mean,
@@ -381,6 +426,9 @@ def run_pipeline(
             "rank_icir": combined_metrics.rank_icir,
         },
         "backtest_metrics": backtest["metrics"],
+        "aggregate_data": backtest["aggregate_metrics"],
+        "yearly_data": backtest["yearly_metrics"].to_dict(orient="records"),
+        "worldquant_expression_map": translation_rows,
     }
 
     if judge_results:
@@ -419,6 +467,7 @@ def main():
     parser.add_argument("--data-config", default="config/data_config.yaml", help="Data config path")
     parser.add_argument("--split", default="test", choices=["train", "val", "test"], help="Evaluation split")
     parser.add_argument("--output-dir", default="out/pipeline_results", help="Output directory")
+    parser.add_argument("--backtest-years", type=int, default=5, help="Limit backtest output to recent N years; <=0 uses all history")
     args = parser.parse_args()
 
     run_pipeline(
@@ -429,6 +478,7 @@ def main():
         data_config_path=args.data_config,
         split=args.split,
         output_dir=args.output_dir,
+        backtest_years=args.backtest_years,
     )
 
 

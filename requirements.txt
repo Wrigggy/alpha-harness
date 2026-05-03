@@ -11,6 +11,7 @@ python-binance
 aiohttp
 akshare
 baostock
+yfinance
 
 # Config & Logging
 pyyaml
@@ -29,8 +30,9 @@ matplotlib
 seaborn
 
 # LLM Judge (Max plan — choose one)
-claude-agent-sdk    # Default: uses Claude via Max subscription
-anthropic           # Optional: direct API fallback
+claude-agent-sdk    # Optional: Claude Max / agent SDK path
+anthropic           # Optional: Anthropic API
+openai              # OpenAI API and DeepSeek-compatible client path
 anyio               # Async support for agent SDK
 
 # Qlib (optional — for CSI500 data)

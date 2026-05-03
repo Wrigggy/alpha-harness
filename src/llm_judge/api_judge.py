@@ -1,8 +1,9 @@
-"""LLM judge implementation using the anthropic SDK directly (API-based)."""
+"""LLM judge implementation for OpenAI, DeepSeek, and Anthropic APIs."""
 
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,6 @@ from loguru import logger
 
 from .base import AlphaJudge, JudgeResult
 
-# Default prompt templates (used when prompt files are not found)
 _DEFAULT_TRANSLATE_PROMPT = (
     "You are a quantitative finance expert. Given a formulaic alpha expression, "
     "describe in plain English what economic signal or market phenomenon this factor captures.\n\n"
@@ -45,132 +45,206 @@ _DEFAULT_SCORE_PROMPT = (
     '    "reasoning": "<why this score>"\n}}'
 )
 
-# Attempt to import anthropic
+try:
+    from openai import OpenAI
+
+    _HAS_OPENAI = True
+except ImportError:
+    _HAS_OPENAI = False
+
+try:
+    import requests
+
+    _HAS_REQUESTS = True
+except ImportError:
+    _HAS_REQUESTS = False
+
 try:
     import anthropic
 
     _HAS_ANTHROPIC = True
 except ImportError:
     _HAS_ANTHROPIC = False
-    logger.warning(
-        "anthropic SDK not installed. ApiJudge will raise on use. "
-        "Install with: pip install anthropic"
-    )
 
 
 class ApiJudge(AlphaJudge):
-    """Alpha judge that uses the anthropic Python SDK directly for scoring."""
+    """Alpha judge that uses a configurable API provider."""
 
     def __init__(
         self,
-        model: str = "claude-opus-4-6",
+        provider: str = "openai",
+        model: str = "gpt-5-mini",
         max_tokens: int = 1024,
         translate_prompt_path: str | None = "prompts/translate.txt",
         score_prompt_path: str | None = "prompts/score.txt",
+        base_url: str | None = None,
+        api_key_env: str | None = None,
     ) -> None:
+        self.provider = provider.lower()
         self.model = model
         self.max_tokens = max_tokens
+        self.base_url = base_url
+        self.api_key_env = api_key_env
         self._cache: dict[str, JudgeResult] = {}
-        self._translate_template = self._load_prompt(
-            translate_prompt_path, _DEFAULT_TRANSLATE_PROMPT
-        )
-        self._score_template = self._load_prompt(
-            score_prompt_path, _DEFAULT_SCORE_PROMPT
-        )
+        self._translate_template = self._load_prompt(translate_prompt_path, _DEFAULT_TRANSLATE_PROMPT)
+        self._score_template = self._load_prompt(score_prompt_path, _DEFAULT_SCORE_PROMPT)
+        self._client = self._build_client()
 
-        if _HAS_ANTHROPIC:
-            self._client = anthropic.Anthropic()
-            logger.info("ApiJudge initialized with model={}", model)
-        else:
-            self._client = None
-            logger.error(
-                "anthropic SDK is not installed. ApiJudge will not function."
-            )
+        logger.info("ApiJudge initialized with provider={} model={}", self.provider, self.model)
 
     @staticmethod
     def _load_prompt(path: str | None, default: str) -> str:
-        """Load a prompt template from file, falling back to the built-in default."""
         if path is None:
             return default
         p = Path(path)
         if p.exists():
-            logger.debug("Loaded prompt template from {}", path)
             return p.read_text(encoding="utf-8")
-        logger.debug("Prompt file {} not found, using built-in default", path)
         return default
 
-    def _call_claude(self, prompt: str) -> str:
-        """Send a prompt to Claude via the anthropic API and return the response text."""
-        if self._client is None:
-            raise RuntimeError(
-                "anthropic SDK is not installed. "
-                "Install with: pip install anthropic"
+    def _resolve_api_key(self) -> str | None:
+        self._load_local_dotenv()
+        env_name = self.api_key_env
+        if env_name:
+            return os.getenv(env_name)
+        if self.provider == "deepseek":
+            return os.getenv("DEEPSEEK_API_KEY")
+        if self.provider == "codex":
+            return os.getenv("OPENAI_API_KEY") or os.getenv("CODEX_API_KEY")
+        if self.provider == "anthropic":
+            return os.getenv("ANTHROPIC_API_KEY")
+        return os.getenv("OPENAI_API_KEY")
+
+    @staticmethod
+    def _load_local_dotenv() -> None:
+        env_path = Path(".env")
+        if not env_path.exists():
+            return
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+    def _build_client(self):
+        api_key = self._resolve_api_key()
+        if self.provider == "anthropic":
+            if not _HAS_ANTHROPIC:
+                raise RuntimeError("anthropic SDK is not installed. Install with: pip install anthropic")
+            return anthropic.Anthropic(api_key=api_key)
+
+        if self.provider == "deepseek":
+            if _HAS_OPENAI:
+                return OpenAI(
+                    api_key=api_key,
+                    base_url=self.base_url or "https://api.deepseek.com",
+                )
+            if not _HAS_REQUESTS:
+                raise RuntimeError("requests is not installed. Cannot use DeepSeek HTTP fallback.")
+            return {
+                "api_key": api_key,
+                "base_url": (self.base_url or "https://api.deepseek.com").rstrip("/"),
+                "transport": "deepseek_http",
+            }
+
+        if self.provider == "codex":
+            if not _HAS_OPENAI:
+                raise RuntimeError("openai SDK is not installed. Install with: pip install openai")
+            return OpenAI(
+                api_key=api_key,
+                base_url=self.base_url,
             )
 
-        message = self._client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        if not _HAS_OPENAI:
+            raise RuntimeError("openai SDK is not installed. Install with: pip install openai")
 
-        # Extract text from the response content blocks
-        text_parts = []
-        for block in message.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-        return "\n".join(text_parts)
+        if self.provider == "openai":
+            return OpenAI(
+                api_key=api_key,
+                base_url=self.base_url,
+            )
+
+        return OpenAI(api_key=api_key, base_url=self.base_url)
+
+    def _call_model(self, prompt: str) -> str:
+        if self.provider == "anthropic":
+            message = self._client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            parts = [block.text for block in message.content if getattr(block, "type", "") == "text"]
+            return "\n".join(parts)
+
+        if isinstance(self._client, dict) and self._client.get("transport") == "deepseek_http":
+            response = requests.post(
+                f"{self._client['base_url']}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self._client['api_key']}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": self.max_tokens,
+                },
+                timeout=120,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return payload["choices"][0]["message"]["content"]
+
+        response = self._client.responses.create(
+            model=self.model,
+            input=prompt,
+            max_output_tokens=self.max_tokens,
+        )
+        text = getattr(response, "output_text", None)
+        if text:
+            return text
+
+        parts: list[str] = []
+        for item in getattr(response, "output", []):
+            for content in getattr(item, "content", []):
+                if getattr(content, "type", "") == "output_text":
+                    parts.append(content.text)
+        return "\n".join(parts)
 
     @staticmethod
     def _parse_json_response(text: str) -> dict[str, Any]:
-        """Extract JSON from a response that may contain markdown code blocks."""
-        # Try to extract from markdown code block first
         match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
         if match:
             text = match.group(1).strip()
-
-        # Try parsing directly
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Last resort: find the first { ... } block
             match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
                 return json.loads(match.group(0))
             raise ValueError(f"Could not parse JSON from response: {text[:200]}")
 
     def translate(self, expression: str) -> str:
-        """Convert expression tree string to natural language."""
         prompt = self._translate_template.format(expression=expression)
         logger.info("Translating expression: {}", expression[:80])
-        result = self._call_claude(prompt)
-        logger.debug("Translation result: {}", result[:120])
-        return result.strip()
+        return self._call_model(prompt).strip()
 
-    def score(
-        self, expression: str, ic: float, matched_papers: list[dict]
-    ) -> JudgeResult:
-        """Score a candidate alpha for economic interpretability."""
-        # Check cache
+    def score(self, expression: str, ic: float, matched_papers: list[dict]) -> JudgeResult:
         if expression in self._cache:
-            logger.info("Cache hit for expression: {}", expression[:80])
             return self._cache[expression]
 
-        # Step 1: Translate expression to NL
         nl_description = self.translate(expression)
-
-        # Step 2: Build paper context string
         if matched_papers:
-            paper_lines = []
-            for p in matched_papers:
-                title = p.get("title", "Unknown")
-                abstract = p.get("abstract", "N/A")
-                paper_lines.append(f"- **{title}**: {abstract[:200]}")
-            paper_context = "\n".join(paper_lines)
+            paper_context = "\n".join(
+                f"- **{p.get('title', 'Unknown')}**: {p.get('abstract', 'N/A')[:200]}"
+                for p in matched_papers
+            )
         else:
             paper_context = "No directly related papers found."
 
-        # Step 3: Format scoring prompt
-        rank_ic = ic * 0.85  # approximate rank IC if not provided
+        rank_ic = ic * 0.85
         prompt = self._score_template.format(
             nl_description=nl_description,
             expression=expression,
@@ -180,9 +254,7 @@ class ApiJudge(AlphaJudge):
         )
 
         logger.info("Scoring expression: {} (IC={:.4f})", expression[:80], ic)
-        raw_response = self._call_claude(prompt)
-
-        # Step 4: Parse the JSON response
+        raw_response = self._call_model(prompt)
         try:
             parsed = self._parse_json_response(raw_response)
             interpretability_score = float(parsed.get("score", 0.0))
@@ -194,22 +266,13 @@ class ApiJudge(AlphaJudge):
             narrative = "Failed to parse LLM response."
             reasoning = f"Parse error: {e}"
 
-        # Step 5: Build result
-        paper_titles = [p.get("title", "Unknown") for p in matched_papers]
         result = JudgeResult(
             expression=expression,
             nl_description=nl_description,
             interpretability_score=interpretability_score,
             economic_narrative=narrative,
-            matched_papers=paper_titles,
+            matched_papers=[p.get("title", "Unknown") for p in matched_papers],
             reasoning=reasoning,
         )
-
-        # Cache the result
         self._cache[expression] = result
-        logger.info(
-            "Scored expression: {} -> {:.2f}",
-            expression[:80],
-            interpretability_score,
-        )
         return result

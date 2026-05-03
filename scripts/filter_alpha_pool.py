@@ -24,7 +24,8 @@ from alphagen.data.parser import parse_expression
 
 from src.data_adapter.to_alphagen_format import PanelAlphaCalculator, _load_local_panel, create_data_splits
 from src.evaluation.validation_gate import ValidationConfig, ValidationGate
-from src.pipeline import load_pool, normalize_weights, tensor_to_factor_frame
+from src.pipeline import tensor_to_factor_frame
+from src.utils.pool_io import load_pool, normalize_weights, orient_expression, score_to_weight
 
 
 def load_data_config(path: str) -> dict:
@@ -99,18 +100,21 @@ def filter_pool(
             forward_returns,
             existing_pool=accepted_frames,
         )
+        oriented_expr, direction = orient_expression(expr_str, result.metrics.get("rank_ic", 0.0))
         rows.append(
             {
                 "expression": expr_str,
+                "selected_expression": oriented_expr,
                 "weight": weight,
+                "direction": direction,
                 "passed": result.passed,
                 "failures": "; ".join(result.failures),
                 **result.metrics,
             }
         )
         if result.passed:
-            accepted_exprs.append(expr_str)
-            accepted_weights.append(weight)
+            accepted_exprs.append(oriented_expr)
+            accepted_weights.append(score_to_weight(result.metrics.get("rank_ic", 0.0), result.metrics.get("rank_icir", 0.0)))
             accepted_frames.append(factor_df)
 
     if not accepted_exprs and rows:
@@ -119,15 +123,14 @@ def filter_pool(
             key=lambda x: (abs(x.get("rank_ic", 0.0)), abs(x.get("rank_icir", 0.0))),
             reverse=True,
         )
-        best_expr = ranked[0]["expression"]
-        best_idx = expr_strings.index(best_expr)
+        best_expr = ranked[0]["selected_expression"]
         accepted_exprs = [best_expr]
-        accepted_weights = [weights[best_idx]]
+        accepted_weights = [score_to_weight(ranked[0].get("rank_ic", 0.0), ranked[0].get("rank_icir", 0.0))]
         logger.warning("No factor passed all gates; fallback to top factor by |RankIC|: {}", best_expr)
 
     output = {
         "exprs": accepted_exprs,
-        "weights": accepted_weights,
+        "weights": normalize_weights(accepted_weights),
         "source_pool": pool_path,
         "filter_split": split,
         "thresholds": {

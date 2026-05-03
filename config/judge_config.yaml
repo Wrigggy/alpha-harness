@@ -1,6 +1,10 @@
 judge:
-  backend: "agent_sdk"  # "agent_sdk" or "api"
-  model: "claude-opus-4-6"
+  backend: "api"  # "agent_sdk" or "api"
+  provider: "deepseek"  # "openai", "deepseek", "codex", or "anthropic"
+  model: "deepseek-chat"
+  max_tokens: 1024
+  api_key_env: "DEEPSEEK_API_KEY"
+  base_url: "https://api.deepseek.com"
   score_threshold: 0.3
   batch_size: 10
   cache_results: true

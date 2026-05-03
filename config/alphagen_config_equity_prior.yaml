@@ -1,0 +1,49 @@
+seed: 42
+device: "auto"
+
+operators:
+  unary:
+    - "Rank"
+    - "Std20"
+    - "Std5"
+    - "Mean20"
+    - "Mean5"
+    - "Delta5"
+    - "Delta20"
+  binary:
+    - "Sub"
+    - "Div"
+    - "Mul"
+features:
+  - "open"
+  - "close"
+  - "high"
+  - "low"
+  - "volume"
+  - "vwap"
+constants:
+  - -1
+  - 0.5
+  - 1
+max_expression_length: 14
+
+n_episodes: 5000
+n_steps: 128
+batch_size: 128
+learning_rate: 1.0e-4
+gamma: 1.0
+ppo_clip: 0.2
+entropy_coef: 0.005
+n_epochs: 10
+
+pool_size: 20
+ic_threshold: 0.015
+correlation_threshold: 0.65
+
+eval_frequency: 500
+checkpoint_freq: 1000
+
+small_scale:
+  max_symbols: 50
+  n_episodes: 5000
+  lookback_months: 24

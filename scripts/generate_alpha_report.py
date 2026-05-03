@@ -41,7 +41,11 @@ if str(EXTERNAL_ALPHAGEN) not in sys.path:
 
 from alphagen.data.expression import Feature, FeatureType, Ref
 from alphagen.data.parser import parse_expression
-from src.backtest.long_short_backtest import long_short_backtest, plot_backtest
+from src.backtest.long_short_backtest import (
+    long_short_backtest,
+    plot_backtest,
+    plot_worldquant_style_panels,
+)
 from src.data_adapter.to_alphagen_format import (
     PanelAlphaCalculator,
     _load_local_panel,
@@ -50,37 +54,12 @@ from src.data_adapter.to_alphagen_format import (
 )
 from src.evaluation.factor_decay import compute_ic_decay, plot_ic_decay
 from src.evaluation.ic_analysis import evaluate_factor
+from src.utils.pool_io import load_pool, normalize_weights
 
 
 def slugify(text: str, max_len: int = 48) -> str:
     text = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
     return text[:max_len] or "factor"
-
-
-def load_pool(pool_path: Path) -> tuple[list[str], list[float]]:
-    with open(pool_path, encoding="utf-8") as f:
-        raw = json.load(f)
-
-    if isinstance(raw, dict) and "exprs" in raw:
-        exprs = [str(x) for x in raw["exprs"]]
-        weights = [float(x) for x in raw.get("weights", [1.0] * len(exprs))]
-        return exprs, weights
-
-    if isinstance(raw, list):
-        exprs = [str(item["expression"]) for item in raw]
-        weights = [float(item.get("weight", item.get("ic", 1.0))) for item in raw]
-        return exprs, weights
-
-    raise ValueError(f"Unsupported pool format: {pool_path}")
-
-
-def normalize_weights(weights: list[float]) -> list[float]:
-    if not weights:
-        return []
-    total = sum(abs(w) for w in weights)
-    if total == 0:
-        return [1.0 / len(weights)] * len(weights)
-    return [w / total for w in weights]
 
 
 def load_data_for_split(
@@ -254,6 +233,46 @@ def plot_correlation_heatmap(corr: pd.DataFrame, title: str, output_path: Path) 
     plt.close(fig)
 
 
+def _format_pct(value: float) -> str:
+    return f"{value:.2%}"
+
+
+def _format_margin_bps(value: float) -> str:
+    return f"{value * 10000:.2f} bps"
+
+
+def trim_to_recent_years(
+    frame: pd.DataFrame,
+    years: int | None,
+) -> pd.DataFrame:
+    if years is None or years <= 0 or frame.empty:
+        return frame
+    index = pd.to_datetime(frame.index)
+    cutoff = index.max() - pd.DateOffset(years=years)
+    mask = index >= cutoff
+    return frame.loc[mask]
+
+
+def write_worldquant_tables(
+    aggregate_path: Path,
+    yearly_path: Path,
+    aggregate_metrics: dict,
+    yearly_metrics: pd.DataFrame,
+) -> None:
+    aggregate_df = pd.DataFrame(
+        [
+            {"metric": "Sharpe", "value": aggregate_metrics.get("Sharpe", 0.0)},
+            {"metric": "Turnover", "value": aggregate_metrics.get("Turnover", 0.0)},
+            {"metric": "Fitness", "value": aggregate_metrics.get("Fitness", 0.0)},
+            {"metric": "Returns", "value": aggregate_metrics.get("Returns", 0.0)},
+            {"metric": "Drawdown", "value": aggregate_metrics.get("Drawdown", 0.0)},
+            {"metric": "Margin", "value": aggregate_metrics.get("Margin", 0.0)},
+        ]
+    )
+    aggregate_df.to_csv(aggregate_path, index=False)
+    yearly_metrics.to_csv(yearly_path, index=False)
+
+
 def compute_factor_correlation_local(
     factor_dict: dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
@@ -285,6 +304,8 @@ def write_summary_markdown(
     metrics_df: pd.DataFrame,
     combined_metrics: dict,
     combined_backtest_metrics: dict,
+    aggregate_metrics: dict,
+    yearly_metrics: pd.DataFrame,
 ) -> None:
     lines = [
         "# Alpha Report",
@@ -299,9 +320,21 @@ def write_summary_markdown(
         f"- IC mean: `{combined_metrics['ic_mean']:.6f}`",
         f"- RankICIR: `{combined_metrics['rank_icir']:.6f}`",
         f"- ICIR: `{combined_metrics['icir']:.6f}`",
-        f"- Backtest annual return: `{combined_backtest_metrics['annual_return']:.6f}`",
         f"- Backtest Sharpe: `{combined_backtest_metrics['sharpe_ratio']:.6f}`",
-        f"- Backtest max drawdown: `{combined_backtest_metrics['max_drawdown']:.6f}`",
+        f"- Backtest Turnover: `{combined_backtest_metrics['avg_turnover']:.6f}`",
+        f"- Backtest Fitness: `{combined_backtest_metrics.get('fitness', 0.0):.6f}`",
+        f"- Backtest Returns: `{combined_backtest_metrics['annual_return']:.6f}`",
+        f"- Backtest Drawdown: `{combined_backtest_metrics['max_drawdown']:.6f}`",
+        f"- Backtest Margin: `{combined_backtest_metrics.get('margin', 0.0):.6f}`",
+        "",
+        "## Aggregate Data",
+        "",
+        f"- Sharpe: `{aggregate_metrics.get('Sharpe', 0.0):.4f}`",
+        f"- Turnover: `{_format_pct(aggregate_metrics.get('Turnover', 0.0))}`",
+        f"- Fitness: `{aggregate_metrics.get('Fitness', 0.0):.4f}`",
+        f"- Returns: `{_format_pct(aggregate_metrics.get('Returns', 0.0))}`",
+        f"- Drawdown: `{_format_pct(aggregate_metrics.get('Drawdown', 0.0))}`",
+        f"- Margin: `{_format_margin_bps(aggregate_metrics.get('Margin', 0.0))}`",
         "",
         "## Per-Factor Metrics",
         "",
@@ -314,6 +347,23 @@ def write_summary_markdown(
             f"| {row['name']} | {row['ic_mean']:.6f} | {row['rank_ic_mean']:.6f} | "
             f"{row['icir']:.6f} | {row['rank_icir']:.6f} | {row['weight']:.6f} |"
         )
+
+    if not yearly_metrics.empty:
+        lines.extend(
+            [
+                "",
+                "## Yearly Backtest",
+                "",
+                "| Year | Sharpe | Turnover | Fitness | Returns | Drawdown | Margin | Long Count | Short Count |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for _, row in yearly_metrics.iterrows():
+            lines.append(
+                f"| {int(row['year'])} | {row['sharpe']:.4f} | {_format_pct(row['turnover'])} | "
+                f"{row['fitness']:.4f} | {_format_pct(row['returns'])} | {_format_pct(row['drawdown'])} | "
+                f"{_format_margin_bps(row['margin'])} | {row['long_count']:.0f} | {row['short_count']:.0f} |"
+            )
 
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -329,6 +379,7 @@ def main() -> None:
     parser.add_argument("--n-long", type=int, default=None)
     parser.add_argument("--n-short", type=int, default=None)
     parser.add_argument("--quantiles", type=int, default=5)
+    parser.add_argument("--backtest-years", type=int, default=5, help="Limit backtest/report to most recent N years; <=0 uses all history")
     parser.add_argument("--output-dir", default=None, help="Optional report output directory")
     args = parser.parse_args()
 
@@ -340,7 +391,7 @@ def main() -> None:
     default_horizon = int(source_cfg.get("target_horizon", args.horizon))
     bars_per_year = int(source_cfg.get("bars_per_year", 8760 if source_name == "crypto" else 252))
 
-    expr_strings, raw_weights = load_pool(pool_path)
+    expr_strings, raw_weights = load_pool(str(pool_path))
     weights = normalize_weights(raw_weights)
 
     output_dir = (
@@ -423,6 +474,7 @@ def main() -> None:
         calculator.make_ensemble_alpha(parsed_exprs, weights),
         name="combined",
     )
+    combined_df = trim_to_recent_years(combined_df, args.backtest_years)
     close_df = panel["close"].loc[combined_df.index, combined_df.columns].astype(float)
     liquidity_field = "quote_volume" if "quote_volume" in panel else "volume"
     liquidity_df = panel[liquidity_field].loc[combined_df.index, combined_df.columns].astype(float)
@@ -479,8 +531,19 @@ def main() -> None:
         bars_per_year=bars_per_year,
     )
     backtest["equity_curve"].to_csv(output_dir / "combined_equity_curve.csv", header=True)
+    backtest["daily_metrics"].to_csv(output_dir / "combined_backtest_daily.csv", index=True)
+    backtest["yearly_metrics"].to_csv(output_dir / "combined_backtest_yearly.csv", index=False)
     with open(output_dir / "combined_backtest_metrics.json", "w", encoding="utf-8") as f:
         json.dump(backtest["metrics"], f, indent=2)
+    with open(output_dir / "combined_backtest_aggregate.json", "w", encoding="utf-8") as f:
+        json.dump(backtest["aggregate_metrics"], f, indent=2)
+
+    write_worldquant_tables(
+        output_dir / "aggregate_data.csv",
+        output_dir / "yearly_data.csv",
+        backtest["aggregate_metrics"],
+        backtest["yearly_metrics"],
+    )
 
     fig = plot_backtest(
         backtest["equity_curve"],
@@ -488,6 +551,13 @@ def main() -> None:
         title=f"Combined Long-Short Backtest ({args.split})",
     )
     fig.savefig(output_dir / "combined_backtest.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    fig = plot_worldquant_style_panels(
+        backtest["daily_metrics"],
+        title=f"Combined WorldQuant-Style Panels ({args.split})",
+    )
+    fig.savefig(output_dir / "combined_worldquant_panels.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     if factor_frames:
@@ -502,6 +572,8 @@ def main() -> None:
         metrics_df=metrics_df,
         combined_metrics=combined_metrics,
         combined_backtest_metrics=backtest["metrics"],
+        aggregate_metrics=backtest["aggregate_metrics"],
+        yearly_metrics=backtest["yearly_metrics"],
     )
 
     summary = {
@@ -514,6 +586,14 @@ def main() -> None:
         "observations": int(combined_df.shape[0]),
         "combined_metrics": combined_metrics,
         "combined_backtest": backtest["metrics"],
+        "aggregate_data": backtest["aggregate_metrics"],
+        "yearly_data": backtest["yearly_metrics"].to_dict(orient="records"),
+        "worldquant_proxy_note": {
+            "fitness_formula": "Sharpe * sqrt(abs(Returns) / max(Turnover, 0.125))",
+            "margin_formula": "PnL / traded_amount",
+            "turnover_formula": "sum(abs(delta weights)) per rebalance",
+            "note": "Local proxy only; not a reproduction of WorldQuant BRAIN proprietary simulation.",
+        },
     }
     with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

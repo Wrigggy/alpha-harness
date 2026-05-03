@@ -1,0 +1,32 @@
+forward_horizon_bars: 1
+delay_bars: 1
+
+signal:
+  rank: true
+  demean: true
+  standardize: false
+  winsorize_quantile: 0.01
+  cap_neutral_field: "market_cap"
+  industry_neutral_field: "industry"
+  fallback_group_field: "industry"
+
+backtest:
+  liquidity_field: "amount"
+  universe_field: "universe_sp500"
+  sub_universe_field: "universe_usa_top200"
+  min_liquidity_percentile: 0.0
+  sub_universe_percentile: 0.5
+  n_long: 20
+  n_short: 20
+  rebalance_freq: 5
+  transaction_cost_bps: 5.0
+
+candidate_gates:
+  min_rank_ic: 0.010
+  min_rank_icir: 0.10
+  min_coverage: 0.60
+  max_avg_turnover: 0.70
+  min_sharpe: 1.25
+  min_fitness: 1.00
+  min_sub_universe_sharpe: 0.20
+  max_weight_concentration: 0.10
