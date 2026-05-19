@@ -107,9 +107,10 @@ def run_alphagen_cn(
     n_steps_override: Optional[int] = None,
     warm_seeds_path: Optional[str] = None,
     run_name: Optional[str] = None,
+    device_override: Optional[str] = None,
 ):
     cfg = load_config(config_path)
-    device = get_device(cfg.get("device", "auto"))
+    device = get_device(device_override or cfg.get("device", "auto"))
 
     seed = seed if seed is not None else int(cfg.get("seed", 42))
     _set_global_seed(seed)
@@ -154,10 +155,12 @@ def run_alphagen_cn(
     test_calc = QLibStockDataCalculator(data_test, target)
 
     # ----- Pool -----
+    # ic_lower_bound=None matches upstream AlphaGen's scripts/rl.py — see note
+    # in run_alphagen.py for rationale.
     pool = MseAlphaPool(
         capacity=cfg["pool_size"],
         calculator=train_calc,
-        ic_lower_bound=cfg.get("ic_threshold"),
+        ic_lower_bound=None,
         l1_alpha=5e-3,
         device=device,
     )
@@ -254,6 +257,8 @@ if __name__ == "__main__":
     parser.add_argument("--n-steps", type=int, default=None)
     parser.add_argument("--warm-seeds", type=str, default=None)
     parser.add_argument("--run-name", type=str, default=None)
+    parser.add_argument("--device", type=str, default=None,
+                        choices=[None, "auto", "cuda", "mps", "cpu"])
     args = parser.parse_args()
     run_alphagen_cn(
         config_path=args.config,
@@ -262,4 +267,5 @@ if __name__ == "__main__":
         n_steps_override=args.n_steps,
         warm_seeds_path=args.warm_seeds,
         run_name=args.run_name,
+        device_override=args.device,
     )

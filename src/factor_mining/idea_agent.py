@@ -160,6 +160,13 @@ def score_picks(
     parser: ExpressionParser,
     min_abs_ic: float = 0.005,
 ) -> list[dict[str, Any]]:
+    """Score each pick on train, sign-flip negatives so all seeds have IC > 0.
+
+    Sign-flip wraps the expression in `Mul(-1.0, ...)`. The pool's linear
+    combiner could fit a negative weight, but AlphaGen's `force_load_exprs`
+    rejects raw-IC < ic_lower_bound regardless of sign, so positive-IC seeds
+    are strictly safer to inject.
+    """
     scored = []
     for item in resolved:
         try:
@@ -175,9 +182,18 @@ def score_picks(
         if not np.isfinite(ic) or abs(ic) < min_abs_ic:
             logger.debug(f"{item['id']} dropped: |IC|={ic:.4f} < {min_abs_ic}")
             continue
+        if ic < 0:
+            flipped = f"Mul(-1.0,{item['expr']})"
+            try:
+                _ = parser.parse(flipped)
+                item["expr"] = flipped
+                item["sign_flipped"] = True
+                ic = -ic
+            except ExpressionParsingError as e:
+                logger.warning(f"{item['id']} sign-flip failed: {e} (using raw expr)")
         item["train_ic"] = ic
         scored.append(item)
-    scored.sort(key=lambda x: abs(x["train_ic"]), reverse=True)
+    scored.sort(key=lambda x: x["train_ic"], reverse=True)
     return scored
 
 

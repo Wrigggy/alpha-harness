@@ -62,6 +62,7 @@ def apply_filter(
     judge_config_path: str,
     data_config_path: str,
     data_source: str,
+    device_override: str | None = None,
 ) -> dict:
     pool_dict = json.loads(pool_path.read_text(encoding="utf-8"))
     exprs: list[str] = pool_dict["exprs"]
@@ -71,10 +72,13 @@ def apply_filter(
     logger.info(f"Data source for IC + ensemble re-eval: {data_source}")
 
     # Build train/val/test calculators for the right data source
+    from src.utils.device import get_device
+    device = get_device(device_override) if device_override else None
     calcs = build_calculators(
         data_source=data_source,
         data_config_path=data_config_path,
         splits_to_load=("train", "val", "test"),
+        device=device,
     )
     train_calc, valid_calc, test_calc = calcs["train"], calcs["val"], calcs["test"]
 
@@ -113,8 +117,8 @@ def apply_filter(
     logger.info(f"Kept {len(kept)}/{n} factors; dropped {len(dropped)}")
 
     # Rebuild a fresh pool from surviving expressions
-    from src.utils.device import get_device
-    device = get_device("auto")
+    if device is None:
+        device = get_device("auto")
     pool = MseAlphaPool(
         capacity=max(len(kept), 1),
         calculator=train_calc,
@@ -180,6 +184,8 @@ if __name__ == "__main__":
     ap.add_argument("--keep-top-k", type=int, default=5)
     ap.add_argument("--judge-config", default="config/judge_config.yaml")
     ap.add_argument("--data-config", default="config/data_config.yaml")
+    ap.add_argument("--device", type=str, default=None,
+                    choices=[None, "auto", "cuda", "mps", "cpu"])
     args = ap.parse_args()
     apply_filter(
         pool_path=args.pool,
@@ -189,4 +195,5 @@ if __name__ == "__main__":
         judge_config_path=args.judge_config,
         data_config_path=args.data_config,
         data_source=args.data_source,
+        device_override=args.device,
     )

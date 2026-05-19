@@ -128,9 +128,10 @@ def run_alphagen(
     n_steps_override: Optional[int] = None,
     warm_seeds_path: Optional[str] = None,
     run_name: Optional[str] = None,
+    device_override: Optional[str] = None,
 ):
     cfg = load_config(config_path)
-    device = get_device(cfg.get("device", "auto"))
+    device = get_device(device_override or cfg.get("device", "auto"))
 
     seed = seed if seed is not None else int(cfg.get("seed", 42))
     _set_global_seed(seed)
@@ -168,11 +169,16 @@ def run_alphagen(
     valid_calc = CryptoAlphaCalculator(data_valid, target)
     test_calc = CryptoAlphaCalculator(data_test, target)
 
-    # Create factor pool
+    # Create factor pool.
+    # NOTE: ic_lower_bound is forced to None (matching upstream AlphaGen's
+    # scripts/rl.py). A non-None threshold causes force_load_exprs() to assert
+    # when a warm seed has raw IC below threshold (even if the pool fits a
+    # negative weight). IC quality is still enforced via the reward signal
+    # and via the post-hoc judge filter.
     pool = MseAlphaPool(
         capacity=cfg["pool_size"],
         calculator=train_calc,
-        ic_lower_bound=cfg.get("ic_threshold"),
+        ic_lower_bound=None,
         l1_alpha=5e-3,
         device=device,
     )
@@ -289,6 +295,9 @@ if __name__ == "__main__":
                         help="Path to warm-seeds JSON from idea_agent")
     parser.add_argument("--run-name", type=str, default=None,
                         help="Tag for output dir + tensorboard + pool filename")
+    parser.add_argument("--device", type=str, default=None,
+                        choices=[None, "auto", "cuda", "mps", "cpu"],
+                        help="Override compute device (default: from config)")
     args = parser.parse_args()
     run_alphagen(
         config_path=args.config,
@@ -298,4 +307,5 @@ if __name__ == "__main__":
         n_steps_override=args.n_steps,
         warm_seeds_path=args.warm_seeds,
         run_name=args.run_name,
+        device_override=args.device,
     )

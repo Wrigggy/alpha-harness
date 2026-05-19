@@ -12,6 +12,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+if [[ -f ".venv/bin/activate" ]]; then
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
+fi
+
 N_STEPS=${N_STEPS:-100000}
 SEEDS=(42 1337)
 TOP_K=${TOP_K:-10}
