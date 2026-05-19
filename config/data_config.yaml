@@ -37,3 +37,14 @@ split:
 returns:
   - 1   # 1H forward return
   - 4   # 4H forward return
+
+# A-share (Qlib) settings — used when --data-source cn
+cn:
+  qlib_data_path: "~/.qlib/qlib_data/cn_data"
+  instruments: "csi300"
+  # Target: 10-day VWAP-to-VWAP forward return (AlphaGen paper alignment)
+  # Train/val/test segments (chronological, non-overlapping)
+  segments:
+    train: ["2015-01-01", "2021-12-31"]
+    val:   ["2022-01-01", "2022-12-31"]
+    test:  ["2023-01-01", "2023-12-31"]

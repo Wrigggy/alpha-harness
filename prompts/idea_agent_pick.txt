@@ -1,0 +1,45 @@
+You are a quantitative researcher building a warm-start factor pool for a reinforcement-learning factor search agent (AlphaGen). You have access to an 80-factor library curated from GTJA-191, WorldQuant Alpha101, Huatai/Shenwan A-share factor reports, and A-share-specific staples.
+
+Your job: for each of the 10 market hypotheses below, **pick** the 1–2 factors from the library that best operationalize that hypothesis. You may NOT invent new expressions — only choose from existing IDs. Output the IDs in JSON.
+
+---
+# Market Hypotheses (cover all 10)
+
+1. **short_reversal** — Recent (1–5 day) returns reverse in the next horizon (Jegadeesh-Titman short-window effect).
+2. **medium_momentum** — 10–40 day price drift persists (medium-horizon momentum).
+3. **vol_regime** — High realized volatility predicts subsequent mean reversion; low vol predicts continuation.
+4. **vol_normalized_momentum** — Raw price moves should be standardized by recent volatility to be predictive.
+5. **vwap_deviation** — Close vs VWAP captures aggressive flow direction and mean-reverts at short horizons.
+6. **volume_confirmation** — Price moves backed by abnormal volume are more likely to persist; price moves on thin volume revert.
+7. **price_volume_divergence** — Sustained negative correlation between price and volume signals distribution; positive correlation signals accumulation.
+8. **range_expansion** — Narrow recent range precedes breakout; wide range precedes consolidation.
+9. **overnight_gap** — The overnight (open vs previous close) gap is a distinct micro-structural signal.
+10. **intraday_strength** — Close-vs-open body magnitude and direction predict next-period drift (or reversal).
+
+---
+# Library (id | family | description | source)
+
+{LIBRARY}
+
+---
+# Output Format
+
+Return a single JSON array, NO prose outside JSON. Each element corresponds to one hypothesis:
+
+```json
+[
+  {
+    "hypothesis": "short_reversal",
+    "chosen_ids": ["m_008", "cp_003"],
+    "reasoning": "m_008 is the canonical 1-day reversal; cp_003 adds vol-normalization which historically improves IC under high-vol regimes."
+  },
+  ...
+]
+```
+
+Rules:
+- Cover ALL 10 hypotheses (one element each).
+- Each element MUST have 1–2 chosen_ids, and every ID MUST exist in the library above.
+- Total unique IDs across all picks should be **roughly 12–16** (some overlap across hypotheses is fine).
+- Reasoning is one short sentence — explain why this ID operationalizes that hypothesis.
+- Do not output anything outside the JSON array.

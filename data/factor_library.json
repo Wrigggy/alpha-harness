@@ -1,0 +1,642 @@
+[
+  {
+    "id": "m_001",
+    "family": "momentum",
+    "expr": "Div(Sub($close,Ref($close,5d)),Ref($close,5d))",
+    "canonical": "Div(Sub($close,Ref($close,5d)),Ref($close,5d))",
+    "description": "5-day cumulative return",
+    "source": "WQ101"
+  },
+  {
+    "id": "m_002",
+    "family": "momentum",
+    "expr": "Div(Sub($close,Ref($close,10d)),Ref($close,10d))",
+    "canonical": "Div(Sub($close,Ref($close,10d)),Ref($close,10d))",
+    "description": "10-day cumulative return",
+    "source": "WQ101"
+  },
+  {
+    "id": "m_003",
+    "family": "momentum",
+    "expr": "Div(Sub($close,Ref($close,20d)),Ref($close,20d))",
+    "canonical": "Div(Sub($close,Ref($close,20d)),Ref($close,20d))",
+    "description": "20-day cumulative return",
+    "source": "WQ101"
+  },
+  {
+    "id": "m_004",
+    "family": "momentum",
+    "expr": "Div(Sub($close,Ref($close,40d)),Ref($close,40d))",
+    "canonical": "Div(Sub($close,Ref($close,40d)),Ref($close,40d))",
+    "description": "40-day cumulative return",
+    "source": "GTJA191"
+  },
+  {
+    "id": "m_005",
+    "family": "momentum",
+    "expr": "Mean(Delta($close,5d),10d)",
+    "canonical": "Mean(Delta($close,5d),10d)",
+    "description": "10-day average of 5-day price change",
+    "source": "GTJA191"
+  },
+  {
+    "id": "m_006",
+    "family": "momentum",
+    "expr": "Div(Delta($close,5d),Std($close,20d))",
+    "canonical": "Div(Delta($close,5d),Std($close,20d))",
+    "description": "Volatility-normalized 5-day momentum (Sharpe-like)",
+    "source": "HTSY"
+  },
+  {
+    "id": "m_007",
+    "family": "momentum",
+    "expr": "Div(Delta($close,10d),Std($close,20d))",
+    "canonical": "Div(Delta($close,10d),Std($close,20d))",
+    "description": "Volatility-normalized 10-day momentum",
+    "source": "HTSY"
+  },
+  {
+    "id": "m_008",
+    "family": "reversal",
+    "expr": "Mul(-1.0,Delta($close,1d))",
+    "canonical": "Mul(-1.0,Delta($close,1d))",
+    "description": "1-day short-term reversal",
+    "source": "WQ101"
+  },
+  {
+    "id": "m_009",
+    "family": "reversal",
+    "expr": "Mul(-1.0,Delta($close,5d))",
+    "canonical": "Mul(-1.0,Delta($close,5d))",
+    "description": "5-day short-term reversal (Jegadeesh-Titman style)",
+    "source": "WQ101"
+  },
+  {
+    "id": "m_010",
+    "family": "momentum",
+    "expr": "Div(Sub($close,Mean($close,10d)),Mean($close,10d))",
+    "canonical": "Div(Sub($close,Mean($close,10d)),Mean($close,10d))",
+    "description": "Distance from 10-day moving average",
+    "source": "GTJA191"
+  },
+  {
+    "id": "m_011",
+    "family": "momentum",
+    "expr": "Div(Sub($close,Max($close,20d)),$close)",
+    "canonical": "Div(Sub($close,Max($close,20d)),$close)",
+    "description": "Distance to 20-day high (negative when below high)",
+    "source": "GTJA191"
+  },
+  {
+    "id": "m_012",
+    "family": "momentum",
+    "expr": "Div(Sub($close,Min($close,20d)),$close)",
+    "canonical": "Div(Sub($close,Min($close,20d)),$close)",
+    "description": "Distance from 20-day low",
+    "source": "GTJA191"
+  },
+  {
+    "id": "m_013",
+    "family": "momentum",
+    "expr": "Div(Mean($close,5d),Mean($close,20d))",
+    "canonical": "Div(Mean($close,5d),Mean($close,20d))",
+    "description": "5-day MA / 20-day MA (golden-cross proxy)",
+    "source": "HTSY"
+  },
+  {
+    "id": "m_014",
+    "family": "momentum",
+    "expr": "Sub(EMA($close,5d),EMA($close,20d))",
+    "canonical": "Sub(EMA($close,5d),EMA($close,20d))",
+    "description": "MACD-like EMA(5)-EMA(20) momentum",
+    "source": "WQ101"
+  },
+  {
+    "id": "m_015",
+    "family": "momentum",
+    "expr": "Div(Sub($close,Mean($close,20d)),Std($close,20d))",
+    "canonical": "Div(Sub($close,Mean($close,20d)),Std($close,20d))",
+    "description": "20-day z-score of close (Bollinger-style)",
+    "source": "SWS"
+  },
+  {
+    "id": "v_001",
+    "family": "volume",
+    "expr": "Div($volume,Mean($volume,5d))",
+    "canonical": "Div($volume,Mean($volume,5d))",
+    "description": "5-day relative volume ratio",
+    "source": "GTJA191"
+  },
+  {
+    "id": "v_002",
+    "family": "volume",
+    "expr": "Div($volume,Mean($volume,20d))",
+    "canonical": "Div($volume,Mean($volume,20d))",
+    "description": "20-day relative volume ratio",
+    "source": "GTJA191"
+  },
+  {
+    "id": "v_003",
+    "family": "volume",
+    "expr": "Log(Add($volume,1.0))",
+    "canonical": "Log(Add($volume,1.0))",
+    "description": "Log-volume (always positive, well-behaved)",
+    "source": "WQ101"
+  },
+  {
+    "id": "v_004",
+    "family": "volume",
+    "expr": "Delta($volume,5d)",
+    "canonical": "Delta($volume,5d)",
+    "description": "5-day volume change",
+    "source": "GTJA191"
+  },
+  {
+    "id": "v_005",
+    "family": "volume",
+    "expr": "Std($volume,20d)",
+    "canonical": "Std($volume,20d)",
+    "description": "20-day volume volatility",
+    "source": "WQ101"
+  },
+  {
+    "id": "v_006",
+    "family": "volume",
+    "expr": "Sub($volume,Mean($volume,20d))",
+    "canonical": "Sub($volume,Mean($volume,20d))",
+    "description": "Abnormal volume vs 20-day average",
+    "source": "GTJA191"
+  },
+  {
+    "id": "v_007",
+    "family": "vol_corr",
+    "expr": "Corr($close,$volume,10d)",
+    "canonical": "Corr($close,$volume,10d)",
+    "description": "10-day close-volume rolling correlation",
+    "source": "WQ101"
+  },
+  {
+    "id": "v_008",
+    "family": "vol_corr",
+    "expr": "Corr($close,$volume,20d)",
+    "canonical": "Corr($close,$volume,20d)",
+    "description": "20-day close-volume rolling correlation",
+    "source": "WQ101"
+  },
+  {
+    "id": "v_009",
+    "family": "vol_corr",
+    "expr": "Mul(-1.0,Corr($close,$volume,20d))",
+    "canonical": "Mul(-1.0,Corr($close,$volume,20d))",
+    "description": "Negative close-volume correlation (volume-divergence reversal)",
+    "source": "HTSY"
+  },
+  {
+    "id": "v_010",
+    "family": "vol_corr",
+    "expr": "Corr(Delta($close,1d),$volume,20d)",
+    "canonical": "Corr(Delta($close,1d),$volume,20d)",
+    "description": "20-day return-volume correlation",
+    "source": "WQ101"
+  },
+  {
+    "id": "v_011",
+    "family": "vol_corr",
+    "expr": "Cov($close,$volume,20d)",
+    "canonical": "Cov($close,$volume,20d)",
+    "description": "20-day price-volume covariance",
+    "source": "GTJA191"
+  },
+  {
+    "id": "v_012",
+    "family": "volume",
+    "expr": "Mul(Div($volume,Mean($volume,5d)),Delta($close,1d))",
+    "canonical": "Mul(Div($volume,Mean($volume,5d)),Delta($close,1d))",
+    "description": "Volume-confirmed daily return",
+    "source": "HTSY"
+  },
+  {
+    "id": "v_013",
+    "family": "volume",
+    "expr": "Div(Mean($volume,5d),Mean($volume,20d))",
+    "canonical": "Div(Mean($volume,5d),Mean($volume,20d))",
+    "description": "Short-term vs long-term volume regime",
+    "source": "SWS"
+  },
+  {
+    "id": "v_014",
+    "family": "vol_corr",
+    "expr": "Corr($high,$volume,10d)",
+    "canonical": "Corr($high,$volume,10d)",
+    "description": "High-price vs volume correlation (buy-pressure proxy)",
+    "source": "GTJA191"
+  },
+  {
+    "id": "v_015",
+    "family": "vol_corr",
+    "expr": "Corr($low,$volume,10d)",
+    "canonical": "Corr($low,$volume,10d)",
+    "description": "Low-price vs volume correlation (sell-pressure proxy)",
+    "source": "GTJA191"
+  },
+  {
+    "id": "vol_001",
+    "family": "vol_regime",
+    "expr": "Std($close,5d)",
+    "canonical": "Std($close,5d)",
+    "description": "5-day realized volatility of close",
+    "source": "WQ101"
+  },
+  {
+    "id": "vol_002",
+    "family": "vol_regime",
+    "expr": "Std($close,20d)",
+    "canonical": "Std($close,20d)",
+    "description": "20-day realized volatility",
+    "source": "WQ101"
+  },
+  {
+    "id": "vol_003",
+    "family": "vol_regime",
+    "expr": "Div(Std($close,5d),Std($close,20d))",
+    "canonical": "Div(Std($close,5d),Std($close,20d))",
+    "description": "Short vs long vol ratio (vol regime indicator)",
+    "source": "HTSY"
+  },
+  {
+    "id": "vol_004",
+    "family": "vol_regime",
+    "expr": "Delta(Std($close,20d),5d)",
+    "canonical": "Delta(Std($close,20d),5d)",
+    "description": "5-day change in 20-day vol",
+    "source": "GTJA191"
+  },
+  {
+    "id": "vol_005",
+    "family": "vol_regime",
+    "expr": "Var($close,20d)",
+    "canonical": "Var($close,20d)",
+    "description": "20-day return variance",
+    "source": "WQ101"
+  },
+  {
+    "id": "vol_006",
+    "family": "vol_regime",
+    "expr": "Std(Delta($close,1d),20d)",
+    "canonical": "Std(Delta($close,1d),20d)",
+    "description": "20-day std of daily returns",
+    "source": "GTJA191"
+  },
+  {
+    "id": "vol_007",
+    "family": "vol_regime",
+    "expr": "Std(Sub($high,$low),20d)",
+    "canonical": "Std(Sub($high,$low),20d)",
+    "description": "Volatility of daily high-low range",
+    "source": "SWS"
+  },
+  {
+    "id": "vol_008",
+    "family": "vol_regime",
+    "expr": "Div(Std($close,5d),Mean(Std($close,5d),20d))",
+    "canonical": "Div(Std($close,5d),Mean(Std($close,5d),20d))",
+    "description": "Vol regime: current vs trailing-average vol",
+    "source": "HTSY"
+  },
+  {
+    "id": "vol_009",
+    "family": "vol_regime",
+    "expr": "Mul(-1.0,Std($close,5d))",
+    "canonical": "Mul(-1.0,Std($close,5d))",
+    "description": "Negative vol (low-vol bias)",
+    "source": "SWS"
+  },
+  {
+    "id": "vol_010",
+    "family": "vol_regime",
+    "expr": "Std($vwap,20d)",
+    "canonical": "Std($vwap,20d)",
+    "description": "20-day VWAP volatility",
+    "source": "GTJA191"
+  },
+  {
+    "id": "r_001",
+    "family": "range",
+    "expr": "Sub($high,$low)",
+    "canonical": "Sub($high,$low)",
+    "description": "Daily high-low range",
+    "source": "GTJA191"
+  },
+  {
+    "id": "r_002",
+    "family": "range",
+    "expr": "Div(Sub($high,$low),$close)",
+    "canonical": "Div(Sub($high,$low),$close)",
+    "description": "Daily range normalized by close",
+    "source": "GTJA191"
+  },
+  {
+    "id": "r_003",
+    "family": "range",
+    "expr": "Sub(Max($close,5d),Min($close,5d))",
+    "canonical": "Sub(Max($close,5d),Min($close,5d))",
+    "description": "5-day price range (max-min)",
+    "source": "WQ101"
+  },
+  {
+    "id": "r_004",
+    "family": "range",
+    "expr": "Div(Sub(Max($close,20d),Min($close,20d)),$close)",
+    "canonical": "Div(Sub(Max($close,20d),Min($close,20d)),$close)",
+    "description": "20-day range / close",
+    "source": "HTSY"
+  },
+  {
+    "id": "r_005",
+    "family": "range",
+    "expr": "Div(Sub($close,Min($low,20d)),Sub(Max($high,20d),Min($low,20d)))",
+    "canonical": "Div(Sub($close,Min($low,20d)),Sub(Max($high,20d),Min($low,20d)))",
+    "description": "Position within 20-day high-low channel (Williams %R-like)",
+    "source": "HTSY"
+  },
+  {
+    "id": "r_006",
+    "family": "range",
+    "expr": "Div(Abs(Sub($close,$open)),Sub($high,$low))",
+    "canonical": "Div(Abs(Sub($close,$open)),Sub($high,$low))",
+    "description": "Body-to-range ratio (decisiveness)",
+    "source": "SWS"
+  },
+  {
+    "id": "r_007",
+    "family": "range",
+    "expr": "Div(Sub($high,$low),Mean(Sub($high,$low),20d))",
+    "canonical": "Div(Sub($high,$low),Mean(Sub($high,$low),20d))",
+    "description": "Range expansion vs 20-day avg range",
+    "source": "GTJA191"
+  },
+  {
+    "id": "r_008",
+    "family": "range",
+    "expr": "Mul(-1.0,Std(Sub($high,$low),5d))",
+    "canonical": "Mul(-1.0,Std(Sub($high,$low),5d))",
+    "description": "Range compression proxy (NR7-like)",
+    "source": "WQ101"
+  },
+  {
+    "id": "r_009",
+    "family": "range",
+    "expr": "Mean(Sub($high,$low),20d)",
+    "canonical": "Mean(Sub($high,$low),20d)",
+    "description": "20-day Average True Range proxy",
+    "source": "WQ101"
+  },
+  {
+    "id": "r_010",
+    "family": "range",
+    "expr": "Div(Sub($high,Greater($open,$close)),Sub($high,$low))",
+    "canonical": "Div(Sub($high,Greater($open,$close)),Sub($high,$low))",
+    "description": "Upper-shadow ratio (selling pressure proxy)",
+    "source": "SWS"
+  },
+  {
+    "id": "vwp_001",
+    "family": "vwap_dev",
+    "expr": "Sub($close,$vwap)",
+    "canonical": "Sub($close,$vwap)",
+    "description": "Close minus VWAP (aggressive flow direction)",
+    "source": "WQ101"
+  },
+  {
+    "id": "vwp_002",
+    "family": "vwap_dev",
+    "expr": "Div(Sub($close,$vwap),$vwap)",
+    "canonical": "Div(Sub($close,$vwap),$vwap)",
+    "description": "Close-VWAP normalized (relative deviation)",
+    "source": "WQ101"
+  },
+  {
+    "id": "vwp_003",
+    "family": "vwap_dev",
+    "expr": "Delta($vwap,5d)",
+    "canonical": "Delta($vwap,5d)",
+    "description": "5-day VWAP change",
+    "source": "GTJA191"
+  },
+  {
+    "id": "vwp_004",
+    "family": "vwap_dev",
+    "expr": "Div($vwap,Mean($vwap,20d))",
+    "canonical": "Div($vwap,Mean($vwap,20d))",
+    "description": "VWAP relative to 20-day VWAP MA",
+    "source": "HTSY"
+  },
+  {
+    "id": "vwp_005",
+    "family": "vwap_dev",
+    "expr": "Mean(Sub($close,$vwap),5d)",
+    "canonical": "Mean(Sub($close,$vwap),5d)",
+    "description": "5-day mean of close-VWAP gap",
+    "source": "SWS"
+  },
+  {
+    "id": "vwp_006",
+    "family": "vwap_dev",
+    "expr": "Sub($open,$vwap)",
+    "canonical": "Sub($open,$vwap)",
+    "description": "Open minus VWAP (opening pressure)",
+    "source": "WQ101"
+  },
+  {
+    "id": "vwp_007",
+    "family": "vwap_dev",
+    "expr": "Sub($vwap,Mean($vwap,5d))",
+    "canonical": "Sub($vwap,Mean($vwap,5d))",
+    "description": "VWAP deviation from 5-day MA",
+    "source": "GTJA191"
+  },
+  {
+    "id": "vwp_008",
+    "family": "vwap_dev",
+    "expr": "Mul(-1.0,Div(Sub($close,$vwap),$vwap))",
+    "canonical": "Mul(-1.0,Div(Sub($close,$vwap),$vwap))",
+    "description": "Reversal of close-VWAP deviation",
+    "source": "HTSY"
+  },
+  {
+    "id": "vwp_009",
+    "family": "vwap_dev",
+    "expr": "Corr($close,$vwap,10d)",
+    "canonical": "Corr($close,$vwap,10d)",
+    "description": "10-day close-VWAP correlation",
+    "source": "WQ101"
+  },
+  {
+    "id": "vwp_010",
+    "family": "vwap_dev",
+    "expr": "Mul(Sub($close,$vwap),$volume)",
+    "canonical": "Mul(Sub($close,$vwap),$volume)",
+    "description": "Volume-weighted close-VWAP gap (dollar flow)",
+    "source": "GTJA191"
+  },
+  {
+    "id": "oc_001",
+    "family": "open_close",
+    "expr": "Sub($close,$open)",
+    "canonical": "Sub($close,$open)",
+    "description": "Daily close-open (body direction)",
+    "source": "GTJA191"
+  },
+  {
+    "id": "oc_002",
+    "family": "open_close",
+    "expr": "Div(Sub($close,$open),$open)",
+    "canonical": "Div(Sub($close,$open),$open)",
+    "description": "Intraday return percentage",
+    "source": "GTJA191"
+  },
+  {
+    "id": "oc_003",
+    "family": "open_close",
+    "expr": "Div(Sub($open,Ref($close,1d)),Ref($close,1d))",
+    "canonical": "Div(Sub($open,Ref($close,1d)),Ref($close,1d))",
+    "description": "Overnight gap return",
+    "source": "WQ101"
+  },
+  {
+    "id": "oc_004",
+    "family": "open_close",
+    "expr": "Mean(Sub($open,Ref($close,1d)),20d)",
+    "canonical": "Mean(Sub($open,Ref($close,1d)),20d)",
+    "description": "20-day avg overnight gap",
+    "source": "HTSY"
+  },
+  {
+    "id": "oc_005",
+    "family": "open_close",
+    "expr": "Mean(Sub($close,$open),5d)",
+    "canonical": "Mean(Sub($close,$open),5d)",
+    "description": "5-day avg intraday direction",
+    "source": "GTJA191"
+  },
+  {
+    "id": "oc_006",
+    "family": "open_close",
+    "expr": "Mean(Abs(Sub($close,$open)),20d)",
+    "canonical": "Mean(Abs(Sub($close,$open)),20d)",
+    "description": "20-day avg body magnitude",
+    "source": "SWS"
+  },
+  {
+    "id": "oc_007",
+    "family": "open_close",
+    "expr": "Delta($open,5d)",
+    "canonical": "Delta($open,5d)",
+    "description": "5-day open price change",
+    "source": "WQ101"
+  },
+  {
+    "id": "oc_008",
+    "family": "open_close",
+    "expr": "Div($open,$close)",
+    "canonical": "Div($open,$close)",
+    "description": "Open-to-close ratio",
+    "source": "GTJA191"
+  },
+  {
+    "id": "oc_009",
+    "family": "open_close",
+    "expr": "Std(Sub($close,$open),20d)",
+    "canonical": "Std(Sub($close,$open),20d)",
+    "description": "20-day std of intraday move",
+    "source": "HTSY"
+  },
+  {
+    "id": "oc_010",
+    "family": "open_close",
+    "expr": "Div(Sub($close,$open),Sub($high,$low))",
+    "canonical": "Div(Sub($close,$open),Sub($high,$low))",
+    "description": "Body fraction of range",
+    "source": "GTJA191"
+  },
+  {
+    "id": "cv_001",
+    "family": "cross_signal",
+    "expr": "Corr($volume,$vwap,20d)",
+    "canonical": "Corr($volume,$vwap,20d)",
+    "description": "20-day volume-VWAP correlation",
+    "source": "WQ101"
+  },
+  {
+    "id": "cv_002",
+    "family": "cross_signal",
+    "expr": "Cov($close,$volume,20d)",
+    "canonical": "Cov($close,$volume,20d)",
+    "description": "20-day close-volume covariance",
+    "source": "GTJA191"
+  },
+  {
+    "id": "cv_003",
+    "family": "cross_signal",
+    "expr": "Corr($high,$low,20d)",
+    "canonical": "Corr($high,$low,20d)",
+    "description": "20-day high-low correlation (range stability)",
+    "source": "SWS"
+  },
+  {
+    "id": "cv_004",
+    "family": "cross_signal",
+    "expr": "Corr($open,$close,20d)",
+    "canonical": "Corr($open,$close,20d)",
+    "description": "20-day open-close correlation",
+    "source": "GTJA191"
+  },
+  {
+    "id": "cv_005",
+    "family": "cross_signal",
+    "expr": "Mul(-1.0,Corr(Delta($close,1d),$volume,20d))",
+    "canonical": "Mul(-1.0,Corr(Delta($close,1d),$volume,20d))",
+    "description": "Negative return-volume correlation (mean reversion)",
+    "source": "HTSY"
+  },
+  {
+    "id": "cp_001",
+    "family": "compound",
+    "expr": "Mul(Corr($volume,$close,10d),Delta($close,5d))",
+    "canonical": "Mul(Corr($volume,$close,10d),Delta($close,5d))",
+    "description": "Volume-confirmed momentum (GTJA-style)",
+    "source": "GTJA191"
+  },
+  {
+    "id": "cp_002",
+    "family": "compound",
+    "expr": "Mul(-1.0,Delta(Div($close,Mean($close,20d)),5d))",
+    "canonical": "Mul(-1.0,Delta(Div($close,Mean($close,20d)),5d))",
+    "description": "Reversal of MA-normalized momentum",
+    "source": "WQ101"
+  },
+  {
+    "id": "cp_003",
+    "family": "compound",
+    "expr": "Div(Mul(-1.0,Delta($close,1d)),Std($close,5d))",
+    "canonical": "Div(Mul(-1.0,Delta($close,1d)),Std($close,5d))",
+    "description": "Volatility-adjusted 1-day reversal",
+    "source": "WQ101"
+  },
+  {
+    "id": "cp_004",
+    "family": "compound",
+    "expr": "Mul(Sub(Div($volume,Mean($volume,5d)),1.0),Delta($close,5d))",
+    "canonical": "Mul(Sub(Div($volume,Mean($volume,5d)),1.0),Delta($close,5d))",
+    "description": "Volume-anomaly-weighted momentum",
+    "source": "HTSY"
+  },
+  {
+    "id": "cp_005",
+    "family": "compound",
+    "expr": "Mul(-1.0,Div(Sub($close,Mean($close,40d)),Mean($close,40d)))",
+    "canonical": "Mul(-1.0,Div(Sub($close,Mean($close,40d)),Mean($close,40d)))",
+    "description": "40-day mean reversion (long-term)",
+    "source": "GTJA191"
+  }
+]

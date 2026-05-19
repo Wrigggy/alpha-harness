@@ -1,17 +1,18 @@
 """Apply LLM judge as a post-filter on a saved AlphaGen pool.
 
-Reads a pool JSON (output of run_alphagen.py), scores each expression with
-the configured LLM judge, drops those below threshold, and re-evaluates the
-resulting ensemble on val/test calculators.
+Reads a pool JSON (output of either run_alphagen.py or run_alphagen_cn.py),
+scores each expression with the configured LLM judge, drops those below the
+threshold, and re-evaluates the resulting ensemble on val/test calculators.
 
 Safety net: always keep the top-K (default 5) factors by |single IC| even if
 they score below the threshold, so we never produce an empty pool.
 
 Usage:
-    python -m src.evaluation.apply_judge_filter \
-        --pool data/factors/E_warm_judge_seed42_pool.json \
-        --out data/factors/E_warm_judge_seed42_filtered.json \
-        --threshold 0.5 \
+    python -m src.evaluation.apply_judge_filter \\
+        --pool data/factors/B_warm_cn_seed42_pool.json \\
+        --out  data/factors/C_warm_judge_cn_seed42_pool.json \\
+        --data-source cn \\
+        --threshold 0.5 \\
         --keep-top-k 5
 """
 
@@ -31,13 +32,11 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "external" / "alphagen"))
 
 from alphagen.config import OPERATORS  # noqa: E402
-from alphagen.data.expression import Feature, FeatureType, Ref  # noqa: E402
 from alphagen.data.parser import ExpressionParser  # noqa: E402
 from alphagen.models.linear_alpha_pool import MseAlphaPool  # noqa: E402
 
-from src.data_adapter.to_alphagen_format import create_data_splits, CryptoAlphaCalculator  # noqa: E402
+from src.factor_mining._calc_factory import build_calculators  # noqa: E402
 from src.llm_judge.claude_agent_judge import ClaudeAgentJudge  # noqa: E402
-from src.utils.device import get_device  # noqa: E402
 
 
 def _build_parser() -> ExpressionParser:
@@ -62,29 +61,23 @@ def apply_filter(
     keep_top_k: int,
     judge_config_path: str,
     data_config_path: str,
+    data_source: str,
 ) -> dict:
     pool_dict = json.loads(pool_path.read_text(encoding="utf-8"))
     exprs: list[str] = pool_dict["exprs"]
     weights: list[float] = pool_dict["weights"]
     n = len(exprs)
     logger.info(f"Loaded pool with {n} factors from {pool_path}")
+    logger.info(f"Data source for IC + ensemble re-eval: {data_source}")
 
-    # Rebuild data + calculators
-    with open(data_config_path, encoding="utf-8") as f:
-        data_cfg = yaml.safe_load(f)
-    processed_dir = data_cfg["data"]["processed_dir"]
-    device = get_device("auto")
-    splits = create_data_splits(
-        processed_dir, data_config_path, device=device,
-        max_backtrack_days=100, max_future_days=10,
+    # Build train/val/test calculators for the right data source
+    calcs = build_calculators(
+        data_source=data_source,
+        data_config_path=data_config_path,
+        splits_to_load=("train", "val", "test"),
     )
-    close = Feature(FeatureType.CLOSE)
-    target = Ref(close, -8) / close - 1
-    train_calc = CryptoAlphaCalculator(splits["train"], target)
-    valid_calc = CryptoAlphaCalculator(splits["val"], target)
-    test_calc = CryptoAlphaCalculator(splits["test"], target)
+    train_calc, valid_calc, test_calc = calcs["train"], calcs["val"], calcs["test"]
 
-    # Compute per-factor IC on train so we can rank for the "keep top-K" safety net
     parser = _build_parser()
     parsed = [parser.parse(e) for e in exprs]
     single_ics = []
@@ -111,7 +104,6 @@ def apply_filter(
     results = judge.batch_score(candidates)
     scores = np.array([r.interpretability_score for r in results])
 
-    # Decide which factors survive
     keep_mask = scores >= threshold
     if keep_top_k > 0:
         topk_idx = np.argsort(-abs_ics)[:keep_top_k]
@@ -120,7 +112,9 @@ def apply_filter(
     dropped = [i for i in range(n) if not keep_mask[i]]
     logger.info(f"Kept {len(kept)}/{n} factors; dropped {len(dropped)}")
 
-    # Rebuild a fresh pool with surviving expressions (lets the combiner re-fit weights)
+    # Rebuild a fresh pool from surviving expressions
+    from src.utils.device import get_device
+    device = get_device("auto")
     pool = MseAlphaPool(
         capacity=max(len(kept), 1),
         calculator=train_calc,
@@ -135,34 +129,38 @@ def apply_filter(
     test_ic, test_ric = pool.test_ensemble(test_calc)
 
     out_state = pool.to_json_dict()
-    out_state["val_ic"] = val_ic
-    out_state["val_ric"] = val_ric
-    out_state["test_ic"] = test_ic
-    out_state["test_ric"] = test_ric
-    out_state["timestamp"] = datetime.now().isoformat()
-    out_state["filter"] = {
-        "source_pool": str(pool_path),
-        "threshold": threshold,
-        "keep_top_k": keep_top_k,
-        "n_input": n,
-        "n_kept": len(kept),
-        "kept_scores": [float(scores[i]) for i in kept],
-        "dropped_scores": [float(scores[i]) for i in dropped],
-        "dropped_exprs": [exprs[i] for i in dropped],
-        "judge_results": [
-            {
-                "expr": exprs[i],
-                "score": float(scores[i]),
-                "kept": bool(keep_mask[i]),
-                "nl": results[i].nl_description,
-                "narrative": results[i].economic_narrative,
-            }
-            for i in range(n)
-        ],
-    }
-    out_state["run_name"] = pool_dict.get("run_name", pool_path.stem) + "_filtered"
-    out_state["seed"] = pool_dict.get("seed")
-    out_state["n_steps"] = pool_dict.get("n_steps")
+    out_state.update({
+        "val_ic": val_ic,
+        "val_ric": val_ric,
+        "test_ic": test_ic,
+        "test_ric": test_ric,
+        "timestamp": datetime.now().isoformat(),
+        "filter": {
+            "source_pool": str(pool_path),
+            "data_source": data_source,
+            "threshold": threshold,
+            "keep_top_k": keep_top_k,
+            "n_input": n,
+            "n_kept": len(kept),
+            "kept_scores": [float(scores[i]) for i in kept],
+            "dropped_scores": [float(scores[i]) for i in dropped],
+            "dropped_exprs": [exprs[i] for i in dropped],
+            "judge_results": [
+                {
+                    "expr": exprs[i],
+                    "score": float(scores[i]),
+                    "kept": bool(keep_mask[i]),
+                    "nl": results[i].nl_description,
+                    "narrative": results[i].economic_narrative,
+                }
+                for i in range(n)
+            ],
+        },
+        "run_name": pool_dict.get("run_name", pool_path.stem) + "_filtered",
+        "seed": pool_dict.get("seed"),
+        "n_steps": pool_dict.get("n_steps"),
+        "data_source": data_source,
+    })
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out_state, indent=2), encoding="utf-8")
@@ -177,6 +175,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--pool", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--data-source", choices=["crypto", "cn"], default="cn")
     ap.add_argument("--threshold", type=float, default=0.5)
     ap.add_argument("--keep-top-k", type=int, default=5)
     ap.add_argument("--judge-config", default="config/judge_config.yaml")
@@ -189,4 +188,5 @@ if __name__ == "__main__":
         keep_top_k=args.keep_top_k,
         judge_config_path=args.judge_config,
         data_config_path=args.data_config,
+        data_source=args.data_source,
     )

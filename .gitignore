@@ -2,6 +2,8 @@
 data/raw/
 data/processed/
 data/alphagen_format/
+data/factors/
+out/
 
 # External repos
 external/
