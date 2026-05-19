@@ -107,5 +107,32 @@ echo "================================================================"
 echo "All A-share result pools:"
 ls -la data/factors/{A_vanilla,B_warm,C_warm_judge}_cn_*_pool.json
 echo "================================================================"
-echo "Tensorboard:  tensorboard --logdir out/tensorboard"
-echo "Analysis  :  jupyter notebook notebooks/04_llm_ablation.ipynb"
+
+# ---------------------------------------------------------------------------
+# Step 4: execute analysis notebook → produce HTML report
+# ---------------------------------------------------------------------------
+echo
+echo "================================================================"
+echo "[4/4] Executing analysis notebook → HTML"
+echo "================================================================"
+.venv/bin/jupyter nbconvert \
+    --to html --execute \
+    --allow-errors \
+    --ExecutePreprocessor.timeout=600 \
+    notebooks/04_llm_ablation.ipynb \
+    2>&1 | tee logs/notebook_execution.log
+
+REPORT=notebooks/04_llm_ablation.html
+if [[ -f "$REPORT" ]]; then
+    echo
+    echo "================================================================"
+    echo "DONE. Open the report:"
+    echo "  $REPORT"
+    echo
+    echo "Pull to your laptop with:"
+    echo "  scp <user>@<linux-host>:$(pwd)/$REPORT ./"
+    echo "================================================================"
+else
+    echo "WARNING: HTML report was not generated. Check logs/notebook_execution.log"
+fi
+echo "Tensorboard: tensorboard --logdir $(pwd)/out/tensorboard"

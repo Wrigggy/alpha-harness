@@ -25,6 +25,8 @@ tensorboard
 # Evaluation & Visualization
 matplotlib
 seaborn
+tbparse           # parse tensorboard event files into pandas (for ablation notebook)
+nbconvert         # auto-generate HTML report from analysis notebook
 
 # LLM Judge (Max plan — choose one)
 claude-agent-sdk    # Default: uses Claude via Max subscription
