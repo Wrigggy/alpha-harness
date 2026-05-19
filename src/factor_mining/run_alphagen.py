@@ -11,11 +11,12 @@ Usage:
 """
 
 import os
+import random
 import sys
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -110,15 +111,35 @@ def load_config(path: str = "config/alphagen_config.yaml") -> dict:
         return yaml.safe_load(f)
 
 
+def _set_global_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+
 def run_alphagen(
     config_path: str = "config/alphagen_config.yaml",
     data_config_path: str = "config/data_config.yaml",
     small_scale: bool = False,
+    seed: Optional[int] = None,
+    n_steps_override: Optional[int] = None,
+    warm_seeds_path: Optional[str] = None,
+    run_name: Optional[str] = None,
 ):
     cfg = load_config(config_path)
     device = get_device(cfg.get("device", "auto"))
 
-    if small_scale:
+    seed = seed if seed is not None else int(cfg.get("seed", 42))
+    _set_global_seed(seed)
+    logger.info(f"Global seed set to {seed}")
+
+    if n_steps_override is not None:
+        n_steps = n_steps_override
+        logger.info(f"Step count override: {n_steps} timesteps")
+    elif small_scale:
         small = cfg.get("small_scale", {})
         n_steps = small.get("n_episodes", 1000)
         logger.info(f"Small-scale mode: {n_steps} timesteps")
@@ -156,12 +177,28 @@ def run_alphagen(
         device=device,
     )
 
+    # Warm-start: inject LLM-proposed seed expressions into the pool BEFORE
+    # the PPO agent starts searching. force_load_exprs computes IC + mutual IC
+    # internally and adds each expression (up to capacity).
+    if warm_seeds_path:
+        from src.factor_mining.idea_agent import load_seed_expressions
+        seed_exprs = load_seed_expressions(Path(warm_seeds_path))
+        logger.info(f"Loading {len(seed_exprs)} warm-start expressions into pool")
+        pool.force_load_exprs(seed_exprs)
+        val_ic_ws, val_ric_ws = pool.test_ensemble(valid_calc)
+        test_ic_ws, test_ric_ws = pool.test_ensemble(test_calc)
+        logger.info(
+            f"Pool after warm-start: size={pool.size}, "
+            f"val_IC={val_ic_ws:.4f}, test_IC={test_ic_ws:.4f}"
+        )
+
     # Create RL environment
     env = AlphaEnv(pool=pool, device=device, print_expr=True)
 
     # Output paths
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_path = str(_ROOT / "out" / "results" / f"alphagen_{timestamp}")
+    tag = run_name if run_name else f"alphagen_{timestamp}"
+    save_path = str(_ROOT / "out" / "results" / tag)
     tb_log_dir = str(_ROOT / "out" / "tensorboard")
 
     # Callback for tensorboard logging and checkpoints
@@ -191,6 +228,7 @@ def run_alphagen(
         gamma=cfg.get("gamma", 1.0),
         clip_range=cfg["ppo_clip"],
         ent_coef=cfg["entropy_coef"],
+        seed=seed,
         verbose=1,
         device=device,
         tensorboard_log=tb_log_dir,
@@ -205,7 +243,7 @@ def run_alphagen(
     model.learn(
         total_timesteps=n_steps,
         callback=callback,
-        tb_log_name=f"alphagen_{timestamp}",
+        tb_log_name=tag,
     )
 
     # Final evaluation
@@ -224,11 +262,17 @@ def run_alphagen(
     pool_state["test_ic"] = test_ic
     pool_state["test_ric"] = test_ric
     pool_state["timestamp"] = datetime.now().isoformat()
+    pool_state["seed"] = seed
+    pool_state["n_steps"] = n_steps
+    pool_state["warm_seeds_path"] = warm_seeds_path
+    pool_state["run_name"] = tag
 
-    with open(output_dir / "alphagen_pool.json", "w") as f:
+    pool_filename = f"{tag}_pool.json" if run_name else "alphagen_pool.json"
+    with open(output_dir / pool_filename, "w") as f:
         json.dump(pool_state, f, indent=2)
 
     logger.info(f"Pool saved: {pool.size} factors, best IC={pool.best_ic_ret:.4f}")
+    logger.info(f"Final pool: {output_dir / pool_filename}")
 
 
 if __name__ == "__main__":
@@ -237,5 +281,21 @@ if __name__ == "__main__":
     parser.add_argument("--small-scale", action="store_true")
     parser.add_argument("--config", default="config/alphagen_config.yaml")
     parser.add_argument("--data-config", default="config/data_config.yaml")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Override config seed for PPO + numpy + torch")
+    parser.add_argument("--n-steps", type=int, default=None,
+                        help="Override total PPO timesteps")
+    parser.add_argument("--warm-seeds", type=str, default=None,
+                        help="Path to warm-seeds JSON from idea_agent")
+    parser.add_argument("--run-name", type=str, default=None,
+                        help="Tag for output dir + tensorboard + pool filename")
     args = parser.parse_args()
-    run_alphagen(args.config, args.data_config, args.small_scale)
+    run_alphagen(
+        config_path=args.config,
+        data_config_path=args.data_config,
+        small_scale=args.small_scale,
+        seed=args.seed,
+        n_steps_override=args.n_steps,
+        warm_seeds_path=args.warm_seeds,
+        run_name=args.run_name,
+    )
