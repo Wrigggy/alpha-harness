@@ -1,20 +1,17 @@
-"""LLM idea-agent: pick warm-start factors from a curated 80-factor library.
+"""LLM idea-agent: warm-start factors for the RL pool.
 
-The LLM is given (a) the library and (b) 10 market hypotheses, and returns 1-2
-factor IDs per hypothesis. We then look up the expressions, score single-factor
-IC on the chosen data source's train calculator, and emit a top-k seed JSON.
+Two modes:
+  pick    — LLM picks factor IDs from the library; we load library expressions
+            directly. (Baseline; known to over-saturate the incremental-IC reward.)
+  compose — LLM composes NEW expressions using library IDs as primitives,
+            conditioned on a regime summary. Resolver expands the F-IDs into
+            full RPN expressions. (Default — leaves headroom for the RL agent.)
 
 Usage:
-    python -m src.factor_mining.idea_agent \\
+    python -m src.factor_mining.idea_agent --mode compose \\
         --seed 42 --top-k 10 \\
         --data-source cn \\
-        --out data/factors/warm_seeds_cn_seed42.json
-
-    # crypto smoke test
-    python -m src.factor_mining.idea_agent \\
-        --seed 42 --top-k 5 \\
-        --data-source crypto \\
-        --out data/factors/warm_seeds_smoke.json
+        --out data/factors/warm_seeds_cn_compose_seed42.json
 """
 
 from __future__ import annotations
@@ -38,7 +35,11 @@ from alphagen.data.parser import ExpressionParser, ExpressionParsingError  # noq
 
 
 LIBRARY_PATH = _ROOT / "data" / "factor_library.json"
-PROMPT_PATH = _ROOT / "prompts" / "idea_agent_pick.txt"
+PROMPT_PICK_PATH = _ROOT / "prompts" / "idea_agent_pick.txt"
+PROMPT_COMPOSE_PATH = _ROOT / "prompts" / "idea_agent_compose.txt"
+
+# Library IDs follow `<prefix>_<3 digits>` (e.g., m_008, cp_003)
+ID_TOKEN_RE = re.compile(r"\b([a-z]+_\d{3})\b")
 
 
 def _build_parser() -> ExpressionParser:
@@ -59,17 +60,10 @@ def _load_library() -> list[dict[str, Any]]:
 
 
 def _render_library_block(lib: list[dict]) -> str:
-    """Compact library table for the prompt. Hides full RPN expression to keep
-    tokens down and to force the LLM to commit by ID rather than by expression."""
     rows = []
     for f in lib:
         rows.append(f"{f['id']:>10s} | {f['family']:>14s} | {f['description']} | {f['source']}")
     return "\n".join(rows)
-
-
-def _load_prompt(lib: list[dict]) -> str:
-    template = PROMPT_PATH.read_text(encoding="utf-8")
-    return template.replace("{LIBRARY}", _render_library_block(lib))
 
 
 def _extract_json_array(text: str) -> list[dict[str, Any]]:
@@ -93,12 +87,11 @@ def _extract_json_array(text: str) -> list[dict[str, Any]]:
     return json.loads(blob[start:end])
 
 
-def pick_factors(lib: list[dict], model: str, seed: int) -> list[dict[str, Any]]:
-    """Returns the raw LLM output (list of {hypothesis, chosen_ids, reasoning})."""
+def _llm_call(prompt: str, model: str, seed: int) -> str:
     import anyio
     from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 
-    async def _call(prompt: str) -> str:
+    async def _call() -> str:
         full = f"{prompt}\n\n[generation_seed_hint={seed}]"
         result = ""
         async for message in query(
@@ -111,23 +104,23 @@ def pick_factors(lib: list[dict], model: str, seed: int) -> list[dict[str, Any]]
             raise RuntimeError("Empty response from Claude")
         return result
 
-    prompt = _load_prompt(lib)
-    raw = anyio.run(_call, prompt)
+    return anyio.run(_call)
+
+
+# ---------------------------------------------------------------------------
+# Pick mode (baseline — LLM returns ID lists)
+# ---------------------------------------------------------------------------
+
+def pick_factors(lib: list[dict], model: str, seed: int) -> list[dict[str, Any]]:
+    template = PROMPT_PICK_PATH.read_text(encoding="utf-8")
+    rendered = template.replace("{LIBRARY}", _render_library_block(lib))
+    raw = _llm_call(rendered, model=model, seed=seed)
     items = _extract_json_array(raw)
     logger.info(f"LLM returned picks for {len(items)} hypotheses")
     return items
 
 
-def resolve_picks(
-    picks: list[dict[str, Any]],
-    lib: list[dict],
-) -> list[dict[str, Any]]:
-    """Look up chosen IDs in the library, dedupe, attach hypothesis tag.
-
-    Returns one entry per unique factor:
-        {id, family, expr, description, hypotheses[], reasonings[]}
-    Picks that reference an unknown ID are logged and skipped.
-    """
+def resolve_picks(picks: list[dict[str, Any]], lib: list[dict]) -> list[dict[str, Any]]:
     by_id = {f["id"]: f for f in lib}
     bucket: dict[str, dict] = {}
     for p in picks:
@@ -154,25 +147,99 @@ def resolve_picks(
     return list(bucket.values())
 
 
+# ---------------------------------------------------------------------------
+# Compose mode (LLM emits new expressions with F-IDs as primitives)
+# ---------------------------------------------------------------------------
+
+def expand_template(template: str, by_id: dict[str, dict]) -> tuple[str, list[str]]:
+    """Substitute every library F-ID token with its canonical RPN expression.
+    Returns (expanded_expr, list_of_used_ids_in_order).
+    """
+    flat = re.sub(r"\s+", "", template)
+    used: list[str] = []
+
+    def _sub(match: re.Match) -> str:
+        fid = match.group(1)
+        if fid in by_id:
+            used.append(fid)
+            return by_id[fid]["expr"]
+        return match.group(0)
+
+    expanded = ID_TOKEN_RE.sub(_sub, flat)
+    return expanded, used
+
+
+def compose_factors(lib: list[dict], regime: str, model: str, seed: int) -> list[dict[str, Any]]:
+    template = PROMPT_COMPOSE_PATH.read_text(encoding="utf-8")
+    rendered = (
+        template
+        .replace("{LIBRARY}", _render_library_block(lib))
+        .replace("{REGIME}", regime)
+    )
+    raw = _llm_call(rendered, model=model, seed=seed)
+    items = _extract_json_array(raw)
+    logger.info(f"LLM returned compositions for {len(items)} hypotheses")
+    return items
+
+
+def resolve_composed(items: list[dict[str, Any]], lib: list[dict]) -> list[dict[str, Any]]:
+    """Flatten composed templates → one entry per composition.
+
+    Drops compositions that are a bare ID (pick-mode in disguise) or that
+    reference unknown F-IDs after expansion.
+    """
+    by_id = {f["id"]: f for f in lib}
+    known_ids = set(by_id.keys())
+    bare_id = re.compile(r"^[a-z]+_\d{3}$")
+    out: list[dict[str, Any]] = []
+    for entry in items:
+        hyp = entry.get("hypothesis", "")
+        regime_rel = entry.get("regime_relevance", "")
+        for comp in entry.get("compositions", []):
+            template = (comp.get("template") or "").strip()
+            if not template:
+                continue
+            flat = re.sub(r"\s+", "", template)
+            if bare_id.match(flat):
+                logger.warning(f"compose: bare ID template {template!r} ignored (pick-mode disguise)")
+                continue
+            expanded, used = expand_template(template, by_id)
+            unknown = set(ID_TOKEN_RE.findall(expanded)) - known_ids
+            if unknown:
+                logger.warning(f"compose: unknown IDs {sorted(unknown)} in template {template!r} (dropped)")
+                continue
+            out.append({
+                "id": f"composed_{len(out):03d}",
+                "family": "composed",
+                "expr": expanded,
+                "template": template,
+                "description": comp.get("rationale", ""),
+                "source": "compose",
+                "hypotheses": [hyp],
+                "regime_relevances": [regime_rel],
+                "reasonings": [comp.get("rationale", "")],
+                "used_library_ids": sorted(set(used)),
+            })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Shared scoring + emission pipeline
+# ---------------------------------------------------------------------------
+
 def score_picks(
     resolved: list[dict[str, Any]],
     train_calc,
     parser: ExpressionParser,
     min_abs_ic: float = 0.005,
 ) -> list[dict[str, Any]]:
-    """Score each pick on train, sign-flip negatives so all seeds have IC > 0.
-
-    Sign-flip wraps the expression in `Mul(-1.0, ...)`. The pool's linear
-    combiner could fit a negative weight, but AlphaGen's `force_load_exprs`
-    rejects raw-IC < ic_lower_bound regardless of sign, so positive-IC seeds
-    are strictly safer to inject.
-    """
+    """Parse, IC-score on train, sign-flip negatives so all emitted seeds have IC > 0."""
     scored = []
     for item in resolved:
         try:
             expr = parser.parse(item["expr"])
         except ExpressionParsingError as e:
-            logger.warning(f"Library expr failed to parse for {item['id']}: {e}")
+            logger.warning(f"Expr failed to parse for {item['id']}: {e}")
             continue
         try:
             ic = float(train_calc.calc_single_IC_ret(expr))
@@ -205,19 +272,13 @@ def run(
     model: str,
     data_config_path: str,
     min_abs_ic: float,
+    mode: str,
 ) -> None:
     np.random.seed(seed)
 
     lib = _load_library()
-    logger.info(f"Loaded {len(lib)} factors from library")
+    logger.info(f"Loaded {len(lib)} factors from library | mode={mode}")
 
-    picks = pick_factors(lib, model=model, seed=seed)
-    resolved = resolve_picks(picks, lib)
-    logger.info(f"Resolved to {len(resolved)} unique factors")
-    if not resolved:
-        raise RuntimeError("LLM returned no valid picks")
-
-    parser = _build_parser()
     from src.factor_mining._calc_factory import build_calculators
     logger.info(f"Building {data_source} train calculator...")
     calcs = build_calculators(
@@ -226,46 +287,78 @@ def run(
         splits_to_load=("train",),
     )
     train_calc = calcs["train"]
+    parser = _build_parser()
+
+    if mode == "pick":
+        picks = pick_factors(lib, model=model, seed=seed)
+        resolved = resolve_picks(picks, lib)
+        raw_payload: Any = picks
+        regime: str | None = None
+    elif mode == "compose":
+        from src.factor_mining._regime import compute_regime_summary
+        regime = compute_regime_summary(train_calc)
+        logger.info(f"Regime: {regime}")
+        items = compose_factors(lib, regime=regime, model=model, seed=seed)
+        resolved = resolve_composed(items, lib)
+        raw_payload = {"regime": regime, "items": items}
+    else:
+        raise ValueError(f"Unknown mode {mode!r} (expected pick | compose)")
+
+    logger.info(f"Resolved to {len(resolved)} candidate {mode} items")
+    if not resolved:
+        raise RuntimeError(f"LLM returned no valid {mode} items")
 
     scored = score_picks(resolved, train_calc, parser, min_abs_ic=min_abs_ic)
-    logger.info(f"{len(scored)} factors passed |IC| ≥ {min_abs_ic}")
+    logger.info(f"{len(scored)} items passed |IC| ≥ {min_abs_ic}")
 
     selected = scored[:top_k]
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    seeds_out = []
+    for s in selected:
+        rec = {
+            "id": s["id"],
+            "family": s["family"],
+            "expr": s["expr"],
+            "description": s["description"],
+            "source": s["source"],
+            "hypotheses": s.get("hypotheses", []),
+            "train_ic": s["train_ic"],
+        }
+        if "template" in s:
+            rec["template"] = s["template"]
+            rec["used_library_ids"] = s.get("used_library_ids", [])
+        if s.get("sign_flipped"):
+            rec["sign_flipped"] = True
+        seeds_out.append(rec)
+
     payload = {
         "seed": seed,
         "model": model,
         "data_source": data_source,
-        "mode": "pick",
+        "mode": mode,
+        "regime": regime,
         "n_library": len(lib),
-        "n_picks_raw": sum(len(p.get("chosen_ids", [])) for p in picks),
         "n_resolved": len(resolved),
         "n_scored": len(scored),
         "n_selected": len(selected),
         "min_abs_ic": min_abs_ic,
-        "raw_picks": picks,
-        "seeds": [
-            {
-                "id": s["id"],
-                "family": s["family"],
-                "expr": s["expr"],
-                "description": s["description"],
-                "source": s["source"],
-                "hypotheses": s["hypotheses"],
-                "train_ic": s["train_ic"],
-            }
-            for s in selected
-        ],
+        "raw_llm_output": raw_payload,
+        "seeds": seeds_out,
     }
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    logger.info(f"Wrote {len(selected)} seeds to {out_path}")
+    logger.info(f"Wrote {len(selected)} {mode} seeds to {out_path}")
     for s in selected:
-        hyps = ",".join(s["hypotheses"][:2])
-        logger.info(f"  IC={s['train_ic']:+.4f}  [{s['family']:>14s}]  {s['id']:>8s}  {s['expr']}  ({hyps})")
+        hyps = ",".join(s.get("hypotheses", [])[:2])
+        tag = "[composed]" if s.get("source") == "compose" else f"[{s['family']:>10s}]"
+        logger.info(f"  IC={s['train_ic']:+.4f}  {tag}  {s['id']:>11s}  {s['expr']}  ({hyps})")
 
 
 def load_seed_expressions(path: Path) -> list[Expression]:
-    """Re-parse the saved warm-seed JSON into Expression objects for `force_load_exprs`."""
+    """Re-parse warm-seed JSON into Expression objects for `force_load_exprs`.
+
+    Works for both pick-mode and compose-mode emitted files — the `expr` field
+    is always a final RPN string, regardless of mode.
+    """
     parser = _build_parser()
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     exprs = []
@@ -279,11 +372,12 @@ def load_seed_expressions(path: Path) -> list[Expression]:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", choices=["pick", "compose"], default="compose",
+                    help="pick=LLM returns library IDs; compose=LLM emits new exprs (default)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--data-source", choices=["crypto", "cn"], default="cn",
-                    help="Which calculator to use for IC scoring (default: cn)")
+    ap.add_argument("--data-source", choices=["crypto", "cn"], default="cn")
     ap.add_argument("--model", default="claude-opus-4-7")
     ap.add_argument("--data-config", default="config/data_config.yaml")
     ap.add_argument("--min-abs-ic", type=float, default=0.005)
@@ -296,4 +390,5 @@ if __name__ == "__main__":
         model=args.model,
         data_config_path=args.data_config,
         min_abs_ic=args.min_abs_ic,
+        mode=args.mode,
     )
