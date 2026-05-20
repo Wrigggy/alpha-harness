@@ -1,19 +1,24 @@
 # Alpha Harness
 
-LLM-guided alpha research framework. Combines automated alpha discovery (AlphaGen/AlphaQCM RL search) with LLM-based economic reasoning to produce interpretable, robust quantitative factors.
+LLM-guided alpha research framework. Combines automated alpha discovery (AlphaGen PPO / AlphaQCM distributional RL) with LLM-based **warm-start composition** and **post-search interpretability scoring** to produce robust, interpretable quantitative factors.
 
-**Core research question**: Does LLM-based economic reasoning improve the quality of RL-discovered alphas?
+**Core research question**: Where does an LLM add value in formulaic factor mining — as a *prior* (warm-start), as an *interpretability filter* (post-judge), or both?
 
 ## Architecture
 
 ```
-Data Sources (Crypto / CSI500)
+Data Sources (Crypto / A-share CSI300)
         │
         ▼
 Feature Expansion (OHLCV → 50+ features)
         │
         ▼
-Factor Search (AlphaGen PPO / AlphaQCM distributional RL)
+LLM Idea-Agent  ──►  Warm-Start Seeds (pick mode OR compose mode)
+        │                       │
+        │                       ▼
+        ▼              ┌────────────────────┐
+Factor Search ◄────────┤ pool.force_load_exprs
+(AlphaGen PPO or AlphaQCM distributional RL)
         │
         ▼
 LLM Judge (post-filter: expression → NL → score)
@@ -45,7 +50,7 @@ uv pip install -r requirements.txt
 git clone https://github.com/RL-MLDM/alphagen.git external/alphagen
 git clone https://github.com/ZhuZhouFan/AlphaQCM.git external/alphaqcm
 
-# Optional: Qlib CSI500 data
+# Optional: Qlib CSI300 data for A-share experiments
 pip install pyqlib
 python -m qlib.run.get_data qlib_data --target_dir ~/.qlib/qlib_data/cn_data --region cn
 ```
@@ -60,47 +65,131 @@ python -m src.data_collection.binance_fetcher
 python -m src.data_collection.data_cleaner
 ```
 
-### 2. Factor Mining
+### 2. Build the 80-Factor Library (one-time)
 
 ```bash
-# AlphaGen (PPO) — small scale for development
-python -m src.factor_mining.run_alphagen --small-scale
-
-# AlphaQCM (distributional RL)
-python -m src.factor_mining.run_alphaqcm --model iqn --small-scale
+python scripts/build_factor_library.py    # writes data/factor_library.json
 ```
 
-### 3. Full Pipeline (with LLM Judge)
+Library composition: GTJA-191 + WorldQuant Alpha101 + HTSY/SWS A-share factors + A-share-specific staples. Every expression is validated through the AlphaGen parser at build time.
+
+### 3. LLM Idea-Agent — Warm-Start Seeds
+
+Two modes, controlled by `--mode`:
 
 ```bash
-# Evaluate a discovered factor pool with LLM scoring
-python -m src.pipeline --source crypto --judge --evaluate-pool data/factors/alphagen_pool.json
+# Compose mode (default) — LLM composes NEW expressions from library primitives,
+# conditioned on the current market regime
+python -m src.factor_mining.idea_agent \
+    --mode compose --seed 42 --top-k 10 \
+    --data-source cn \
+    --out data/factors/warm_seeds_cn_compose_seed42.json
 
-# Without LLM judge (validation only)
-python -m src.pipeline --source crypto --no-judge --evaluate-pool data/factors/alphagen_pool.json
+# Pick mode (baseline) — LLM picks factor IDs from the library verbatim
+python -m src.factor_mining.idea_agent \
+    --mode pick --seed 42 --top-k 10 \
+    --data-source cn \
+    --out data/factors/warm_seeds_cn_pick_seed42.json
 ```
 
-### 4. Analysis
+Output is a JSON pool of {id, expression, train_IC, hypotheses, [template, used_library_ids]} that any RL runner can consume via `--warm-seeds`.
+
+### 4. Factor Mining (with or without warm-start)
+
+Same interface across both RL backends:
+
+```bash
+# AlphaGen on CSI300, compose warm-start
+python -m src.factor_mining.run_alphagen_cn \
+    --seed 42 --n-steps 100000 \
+    --warm-seeds data/factors/warm_seeds_cn_compose_seed42.json \
+    --run-name B_compose_alphagen_cn_seed42
+
+# AlphaQCM on CSI300, compose warm-start (distributional RL)
+python -m src.factor_mining.run_alphaqcm \
+    --data-source cn --seed 42 --model qrdqn \
+    --warm-seeds data/factors/warm_seeds_cn_compose_seed42.json \
+    --run-name B_compose_qcm_cn_seed42
+
+# AlphaQCM on crypto, vanilla
+python -m src.factor_mining.run_alphaqcm --data-source crypto --small-scale
+```
+
+### 5. Full Pipeline (with LLM Judge post-filter)
+
+```bash
+python -m src.pipeline --source crypto --judge \
+    --evaluate-pool data/factors/B_compose_alphagen_cn_seed42_pool.json
+```
+
+### 6. Ablation Experiment + Auto Report
+
+```bash
+bash scripts/run_experiment_cn.sh
+# Runs 6 conditions (2 seeds × 3 conditions), then nbconvert produces
+# notebooks/04_llm_ablation.html for one-file scp back to laptop
+```
+
+### 7. Analysis
 
 ```bash
 jupyter notebook notebooks/
 ```
+
+## LLM Warm-Start — Pick vs Compose
+
+The idea-agent does the same thing both modes: it asks the LLM, conditioned on a set of market hypotheses, to propose factors that the RL agent should start with. The crucial difference is **what the LLM emits**.
+
+### Pick mode (baseline)
+
+LLM returns a JSON array of factor IDs. We look them up in the 80-factor library and load the canonical expressions directly into the RL pool.
+
+**Empirical finding (negative result)**: pick-mode warm-start *hurts* AlphaGen's final IC. The pool starts at val IC ≈ 0.05 from the LLM picks, then test IC **dips** during PPO training before recovering — never beating the vanilla curve.
+
+**Why it fails**: AlphaGen's reward = incremental IC of a new factor added to the pool. Pre-loading high-IC factors makes the marginal contribution of newly-generated factors tiny → advantage signal saturates → PPO explores poorly. The warm-start does not poison parameters; it **kills reward signal density**. This is the same root cause that motivates AlphaQCM's distributional RL.
+
+### Compose mode (default)
+
+LLM receives:
+- the 80-factor library as **primitives**, referenced by ID (e.g., `m_008`, `v_003`)
+- 10 market hypotheses (short reversal, medium momentum, vol regime, …)
+- a **regime summary** computed from the train-data tail (realized vol, median drift, cross-sectional dispersion)
+
+LLM emits templates like `Mul(Sub(0,m_008),Div(v_003,v_004))`. A resolver in `idea_agent.py` expands each F-ID into its canonical RPN expression, the existing parser validates the result, IC is scored on train, negative-IC seeds are sign-flipped via `Mul(-1.0, ...)`, and the top-K are written to the warm-seeds JSON.
+
+**Why compose mode is the contender**: composed factors are *novel* (not in the library) yet *grounded* in vetted building blocks. They don't pre-fill the high-IC slots → RL still has headroom to improve from. Inspired by AlphaAgent (KDD 2025), LLM-MCTS (arXiv 2505.11122), CogALPHA (arXiv 2511.18850), and QuantaAlpha (ICLR 2026 review). Pick mode is preserved as a baseline-negative control.
+
+A B-style **free-form generation** mode (LLM emits raw expressions without a library scaffold, with novelty regularization) is parked as future work.
 
 ## Project Structure
 
 ```
 alpha-harness/
 ├── config/
-│   ├── data_config.yaml          # Data source settings
+│   ├── data_config.yaml          # Crypto + CSI300 segments
 │   ├── alphagen_config.yaml      # PPO hyperparameters
 │   ├── alphaqcm_config.yaml      # Distributional RL settings
 │   └── judge_config.yaml         # LLM judge configuration
+├── data/
+│   └── factor_library.json       # 80-factor curated library (gitignored)
+├── prompts/
+│   ├── idea_agent_pick.txt       # Pick-mode prompt
+│   ├── idea_agent_compose.txt    # Compose-mode prompt
+│   ├── score.txt                 # Judge scoring
+│   └── translate.txt             # Expression → NL
 ├── src/
 │   ├── data_collection/          # Crypto data pipeline (Binance)
 │   ├── data_adapter/             # AlphaGen/QCM tensor format bridge
 │   ├── data_sources/             # Unified data interface (crypto + Qlib)
 │   ├── feature_expansion/        # OHLCV → 50+ features
-│   ├── factor_mining/            # AlphaGen + AlphaQCM runners
+│   ├── factor_mining/
+│   │   ├── idea_agent.py         # LLM warm-start (pick + compose)
+│   │   ├── _regime.py            # Realized vol/drift/dispersion summary
+│   │   ├── _calc_factory.py      # Centralized crypto/cn calculator factory
+│   │   ├── _qcm_parser.py        # Parser for QCM-fork Expression types
+│   │   ├── run_alphagen.py       # AlphaGen PPO (crypto)
+│   │   ├── run_alphagen_cn.py    # AlphaGen PPO (CSI300)
+│   │   └── run_alphaqcm.py       # AlphaQCM (crypto OR CSI300)
 │   ├── knowledge_base/           # Paper corpus & retrieval
 │   ├── llm_judge/                # LLM-based alpha scoring
 │   ├── evaluation/               # IC analysis + validation gates
@@ -108,24 +197,14 @@ alpha-harness/
 │   ├── backtest/                 # Long-short portfolio backtest
 │   ├── pipeline.py               # End-to-end orchestration
 │   └── utils/                    # Device detection, logging
-├── prompts/                      # LLM prompt templates
+├── scripts/
+│   ├── build_factor_library.py   # Programmatic library builder + validator
+│   ├── run_experiment_cn.sh      # 6-run CSI300 ablation + auto HTML report
+│   └── smoke_test.sh             # Mac CPU smoke test on crypto
 ├── papers/                       # Paper corpus (18 seed papers)
-├── external/                     # AlphaGen + AlphaQCM repos
-├── notebooks/                    # Analysis notebooks
-└── docs/                         # Design specs
+├── external/                     # alphagen + alphaqcm (gitignored)
+└── notebooks/                    # Analysis notebooks
 ```
-
-## New Modules (vs. crypto-alpha-mining)
-
-| Module | Purpose |
-|--------|---------|
-| `data_sources/` | Unified data interface supporting crypto (Binance) and equity (Qlib/CSI500) |
-| `feature_expansion/` | Expands 5 OHLCV fields to 51 features (returns, volatility, momentum, VWAP, volume profile, etc.) |
-| `knowledge_base/` | 18-paper seed corpus with tag-based retrieval for LLM judge context |
-| `llm_judge/` | Expression → NL translation + interpretability scoring via Claude (Max plan or API) |
-| `evaluation/validation_gate.py` | Formalized multi-gate validation (IC, ICIR, turnover, decay, correlation, judge score) |
-| `portfolio/` | Factor combination: equal weight, IC-weighted, ridge regression |
-| `pipeline.py` | End-to-end orchestration connecting all layers |
 
 ## LLM Judge
 
@@ -143,12 +222,26 @@ Calibration: the judge accepts signals with *any* plausible mechanism and only r
 
 ## Hardware
 
-| | Mac (dev) | CUDA (full) |
+|  | Mac (dev) | CUDA (full) |
 |---|---|---|
-| Device | MPS | NVIDIA GPU |
-| Universe | 50 symbols | 500 symbols |
-| AlphaGen | 1,000 steps | 300,000 steps |
+| Device | MPS / CPU | NVIDIA GPU |
+| Universe | 50 crypto symbols | 300 A-share symbols (CSI300) |
+| AlphaGen | 1,000 steps (smoke) | 100,000–300,000 steps |
 | AlphaQCM | 50,000 steps | 300,000 steps |
+
+`--device {auto,cuda,mps,cpu}` is exposed on every runner. The MPS backend is OK for training but `pool.optimize()` calls float64 ops that MPS does not support, so the smoke test pins to `cpu`.
+
+## Ablation Conditions
+
+`scripts/run_experiment_cn.sh` runs 2 seeds × 3 conditions on CSI300:
+
+| Condition | What it tests |
+|---|---|
+| A — vanilla | RL search, no LLM at all |
+| B — warm-start | RL search starting from LLM-composed factors |
+| C — warm-start + judge | B's final pool, judge filter applied to drop low-interpretability factors |
+
+C is built from B's pool with no extra training, which keeps the GPU budget at 4 training runs total. The notebook `notebooks/04_llm_ablation.ipynb` is auto-executed by `nbconvert` at the end of the script and produces a single self-contained HTML report.
 
 ## Key Design Decisions
 
@@ -156,3 +249,6 @@ Calibration: the judge accepts signals with *any* plausible mechanism and only r
 - **Post-filter judge**: LLM scores after search, not during — keeps search fast, enables clean ablation
 - **Tag-based retrieval**: No vector DB — JSON corpus + tag matching is sufficient at research scale
 - **Max plan first**: Claude Agent SDK uses subscription credits, no per-token API costs
+- **Compose-mode resolver**: LLM references library factors by ID (`m_008`) instead of repeating their full RPN. Cuts prompt tokens, lets the LLM stay focused on combination logic, and makes the audit trail (`used_library_ids`) explicit
+- **Sign-flip on negative IC**: warm seeds wrap negative-IC factors in `Mul(-1.0, ...)` so the RL pool's `force_load_exprs` never rejects them on sign alone
+- **In-tree parser for QCM**: the AlphaQCM fork ships expression.py but not parser.py, and `external/` is gitignored — so a parser targeting QCM Expression types lives at `src/factor_mining/_qcm_parser.py` instead of being patched into the fork
