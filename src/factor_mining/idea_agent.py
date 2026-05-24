@@ -256,11 +256,18 @@ def run(
     min_abs_ic: float,
     mode: str,
     llm_backend: str | None,
+    provider: str | None = None,
 ) -> None:
     np.random.seed(seed)
 
-    client = get_llm_client(backend=llm_backend, model=model)
-    logger.info(f"LLM client: backend={client.backend} model={client.model}")
+    extra: dict = {}
+    if provider:
+        extra["provider"] = provider
+    client = get_llm_client(backend=llm_backend, model=model, **extra)
+    logger.info(
+        f"LLM client: backend={client.backend} model={client.model}"
+        + (f" provider={provider}" if provider else "")
+    )
 
     lib = _load_library()
     logger.info(f"Loaded {len(lib)} factors from library | mode={mode}")
@@ -379,6 +386,12 @@ if __name__ == "__main__":
     )
     ap.add_argument("--data-config", default="config/data_config.yaml")
     ap.add_argument("--min-abs-ic", type=float, default=0.005)
+    ap.add_argument(
+        "--provider",
+        default=None,
+        help="OpenRouter provider routing — e.g. 'DeepSeek' to force the "
+             "official DeepSeek endpoint. Falls back to $OPENROUTER_PROVIDER.",
+    )
     args = ap.parse_args()
     run(
         seed=args.seed,
@@ -390,4 +403,5 @@ if __name__ == "__main__":
         min_abs_ic=args.min_abs_ic,
         mode=args.mode,
         llm_backend=args.llm_backend,
+        provider=args.provider,
     )

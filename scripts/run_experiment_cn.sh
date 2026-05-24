@@ -24,6 +24,7 @@ JUDGE_THRESHOLD=${JUDGE_THRESHOLD:-0.5}
 JUDGE_KEEP_TOP_K=${JUDGE_KEEP_TOP_K:-5}
 IDEA_MODEL=${IDEA_MODEL:-claude-opus-4-7}
 DATA_SOURCE=cn
+DEVICE=${DEVICE:-cuda}
 
 mkdir -p data/factors out/results out/tensorboard logs
 
@@ -65,6 +66,7 @@ for SEED in "${SEEDS[@]}"; do
             --seed "$SEED" \
             --n-steps "$N_STEPS" \
             --run-name "$RUN_A" \
+            --device "$DEVICE" \
             2>&1 | tee "logs/${RUN_A}.log"
     fi
 
@@ -78,6 +80,7 @@ for SEED in "${SEEDS[@]}"; do
             --n-steps "$N_STEPS" \
             --warm-seeds "data/factors/warm_seeds_cn_seed${SEED}.json" \
             --run-name "$RUN_B" \
+            --device "$DEVICE" \
             2>&1 | tee "logs/${RUN_B}.log"
     fi
 done
@@ -98,6 +101,7 @@ for SEED in "${SEEDS[@]}"; do
             --data-source "$DATA_SOURCE" \
             --threshold "$JUDGE_THRESHOLD" \
             --keep-top-k "$JUDGE_KEEP_TOP_K" \
+            --device "$DEVICE" \
             2>&1 | tee "logs/${RUN_C}.log"
     fi
 done

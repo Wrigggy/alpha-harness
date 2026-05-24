@@ -1,14 +1,20 @@
 judge:
   # backend: claude_code (Max plan, default) | openrouter (your API key) | anthropic (direct)
   # OpenRouter needs: export OPENROUTER_API_KEY=sk-or-...
+  # `provider` pins the preferred upstream behind OpenRouter — "DeepSeek" puts
+  # DeepSeek's official endpoint at the front of the routing order. Combined
+  # with the default allow_fallbacks=true (in src/llm_client/openrouter.py),
+  # OpenRouter falls back to DeepInfra/Novita/etc. if the official endpoint is
+  # not reachable on this account (e.g., no BYOK).
   # Legacy slugs still accepted: agent_sdk -> claude_code, api -> anthropic
-  backend: "claude_code"
+  backend: "openrouter"
+  model: "deepseek/deepseek-chat"
+  provider: "DeepSeek"
 
   # If omitted, a sensible per-backend default is used:
   #   claude_code -> claude-opus-4-7
   #   openrouter  -> deepseek/deepseek-chat
   #   anthropic   -> claude-opus-4-7
-  # model: "deepseek/deepseek-chat"
 
   score_threshold: 0.3
   batch_size: 10

@@ -43,7 +43,7 @@ def _build_parser() -> ExpressionParser:
     return ExpressionParser(
         operators=OPERATORS,
         ignore_case=False,
-        time_deltas_need_suffix=True,
+        time_deltas_need_suffix=False,
         non_positive_time_deltas_allowed=False,
         feature_need_dollar_sign=True,
     )
@@ -100,11 +100,15 @@ def apply_filter(
         backend = "claude_code"
     elif backend == "api":
         backend = "anthropic"
+    extra: dict = {}
+    if "provider" in judge_cfg and judge_cfg["provider"]:
+        extra["provider"] = judge_cfg["provider"]
     judge = LLMJudge.from_backend(
         backend=backend,
         model=judge_cfg.get("model"),
         score_prompt_path=prompts.get("scoring", "prompts/score.txt"),
         translate_prompt_path=prompts.get("translation", "prompts/translate.txt"),
+        **extra,
     )
     candidates = [
         {"expression": e, "ic": float(ic), "matched_papers": []}

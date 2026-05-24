@@ -78,9 +78,10 @@ class LLMJudge(AlphaJudge):
         model: str | None = None,
         translate_prompt_path: str | None = "prompts/translate.txt",
         score_prompt_path: str | None = "prompts/score.txt",
+        **client_kwargs,
     ) -> "LLMJudge":
         return cls(
-            client=get_llm_client(backend=backend, model=model),
+            client=get_llm_client(backend=backend, model=model, **client_kwargs),
             translate_prompt_path=translate_prompt_path,
             score_prompt_path=score_prompt_path,
         )

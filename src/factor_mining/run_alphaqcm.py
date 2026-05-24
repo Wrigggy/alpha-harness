@@ -72,6 +72,17 @@ from src.factor_mining._qcm_parser import (  # noqa: E402
 from src.utils.device import get_device  # noqa: E402
 
 
+def _unpack_ic(result):
+    """QCM fork's AlphaPool.test_ensemble returns a bare float (rank-IC line is
+    commented out upstream). Coerce to a (ic, rank_ic) tuple so callers can
+    unpack consistently."""
+    if isinstance(result, tuple):
+        ic = float(result[0])
+        ric = float(result[1]) if len(result) > 1 else float("nan")
+        return ic, ric
+    return float(result), float("nan")
+
+
 def _build_parser() -> ExpressionParser:
     return ExpressionParser(
         operators=OPERATORS,
@@ -198,6 +209,7 @@ def run_alphaqcm(
     data_source: str = "crypto",
     warm_seeds_path: Optional[str] = None,
     run_name: Optional[str] = None,
+    n_steps: Optional[int] = None,
 ):
     cfg = load_config(config_path)
     device = get_device(cfg.get("device", "auto"))
@@ -214,6 +226,9 @@ def run_alphaqcm(
     if small_scale:
         agent_config["num_steps"] = cfg.get("small_scale", {}).get("n_episodes", 50_000)
         logger.info(f"Small-scale mode: {agent_config['num_steps']} steps")
+    if n_steps is not None:
+        agent_config["num_steps"] = n_steps
+        logger.info(f"--n-steps override: {agent_config['num_steps']} steps")
 
     logger.info(f"Data source: {data_source}")
     train_calc, valid_calc, test_calc, meta = _build_data_layer(
@@ -234,8 +249,8 @@ def run_alphaqcm(
         seed_exprs = _load_warm_seed_exprs(warm_seeds_path)
         logger.info(f"Loading {len(seed_exprs)} warm-start expressions into pool")
         pool.force_load_exprs(seed_exprs)
-        val_ic_ws, _ = pool.test_ensemble(valid_calc)
-        test_ic_ws, _ = pool.test_ensemble(test_calc)
+        val_ic_ws, _ = _unpack_ic(pool.test_ensemble(valid_calc))
+        test_ic_ws, _ = _unpack_ic(pool.test_ensemble(test_calc))
         logger.info(
             f"Pool after warm-start: size={pool.size}, "
             f"val_IC={val_ic_ws:.4f}, test_IC={test_ic_ws:.4f}"
@@ -276,8 +291,8 @@ def run_alphaqcm(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     pool_state = pool.to_dict()
-    val_ic, val_ric = pool.test_ensemble(valid_calc)
-    test_ic, test_ric = pool.test_ensemble(test_calc)
+    val_ic, val_ric = _unpack_ic(pool.test_ensemble(valid_calc))
+    test_ic, test_ric = _unpack_ic(pool.test_ensemble(test_calc))
     pool_state.update({
         "val_ic": val_ic, "val_ric": val_ric,
         "test_ic": test_ic, "test_ric": test_ric,
@@ -315,6 +330,8 @@ if __name__ == "__main__":
     parser.add_argument("--warm-seeds", type=str, default=None,
                         help="Path to warm_seeds JSON from idea_agent (pick or compose mode)")
     parser.add_argument("--run-name", type=str, default=None)
+    parser.add_argument("--n-steps", type=int, default=None,
+                        help="Override n_episodes from config (training step count).")
     args = parser.parse_args()
     run_alphaqcm(
         config_path=args.config,
@@ -327,4 +344,5 @@ if __name__ == "__main__":
         data_source=args.data_source,
         warm_seeds_path=args.warm_seeds,
         run_name=args.run_name,
+        n_steps=args.n_steps,
     )

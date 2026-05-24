@@ -71,7 +71,10 @@ class AlphaGenCNCallback(BaseCallback):
         n_days_total = sum(calc.data.n_days for calc in self.test_calculators)
         ic_mean, ric_mean = 0.0, 0.0
         for i, calc in enumerate(self.test_calculators, start=1):
-            ic, ric = pool.test_ensemble(calc)
+            if pool.size == 0:
+                ic, ric = 0.0, 0.0
+            else:
+                ic, ric = pool.test_ensemble(calc)
             weight = calc.data.n_days / n_days_total
             ic_mean += ic * weight
             ric_mean += ric * weight
