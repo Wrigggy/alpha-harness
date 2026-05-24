@@ -1,4 +1,4 @@
-"""LLM judge implementation using the anthropic SDK directly (API-based)."""
+"""Unified LLM judge — backend-agnostic, takes an injected LLMClient."""
 
 from __future__ import annotations
 
@@ -9,9 +9,11 @@ from typing import Any
 
 from loguru import logger
 
+from src.llm_client import LLMClient, get_llm_client
+
 from .base import AlphaJudge, JudgeResult
 
-# Default prompt templates (used when prompt files are not found)
+
 _DEFAULT_TRANSLATE_PROMPT = (
     "You are a quantitative finance expert. Given a formulaic alpha expression, "
     "describe in plain English what economic signal or market phenomenon this factor captures.\n\n"
@@ -45,120 +47,79 @@ _DEFAULT_SCORE_PROMPT = (
     '    "reasoning": "<why this score>"\n}}'
 )
 
-# Attempt to import anthropic
-try:
-    import anthropic
 
-    _HAS_ANTHROPIC = True
-except ImportError:
-    _HAS_ANTHROPIC = False
-    logger.warning(
-        "anthropic SDK not installed. ApiJudge will raise on use. "
-        "Install with: pip install anthropic"
-    )
+class LLMJudge(AlphaJudge):
+    """Alpha judge backed by an injected LLMClient.
 
-
-class ApiJudge(AlphaJudge):
-    """Alpha judge that uses the anthropic Python SDK directly for scoring."""
+    Construct directly with `LLMJudge(client=...)`, or via the convenience
+    classmethod `LLMJudge.from_backend(backend='openrouter', model=...)`.
+    """
 
     def __init__(
         self,
-        model: str = "claude-opus-4-6",
-        max_tokens: int = 1024,
+        client: LLMClient,
         translate_prompt_path: str | None = "prompts/translate.txt",
         score_prompt_path: str | None = "prompts/score.txt",
     ) -> None:
-        self.model = model
-        self.max_tokens = max_tokens
+        self.client = client
+        self.model = client.model  # back-compat: callers may read judge.model
         self._cache: dict[str, JudgeResult] = {}
-        self._translate_template = self._load_prompt(
-            translate_prompt_path, _DEFAULT_TRANSLATE_PROMPT
-        )
-        self._score_template = self._load_prompt(
-            score_prompt_path, _DEFAULT_SCORE_PROMPT
+        self._translate_template = self._load_prompt(translate_prompt_path, _DEFAULT_TRANSLATE_PROMPT)
+        self._score_template = self._load_prompt(score_prompt_path, _DEFAULT_SCORE_PROMPT)
+        logger.info(
+            "LLMJudge initialized: backend={} model={}",
+            client.backend, client.model,
         )
 
-        if _HAS_ANTHROPIC:
-            self._client = anthropic.Anthropic()
-            logger.info("ApiJudge initialized with model={}", model)
-        else:
-            self._client = None
-            logger.error(
-                "anthropic SDK is not installed. ApiJudge will not function."
-            )
+    @classmethod
+    def from_backend(
+        cls,
+        backend: str | None = None,
+        model: str | None = None,
+        translate_prompt_path: str | None = "prompts/translate.txt",
+        score_prompt_path: str | None = "prompts/score.txt",
+    ) -> "LLMJudge":
+        return cls(
+            client=get_llm_client(backend=backend, model=model),
+            translate_prompt_path=translate_prompt_path,
+            score_prompt_path=score_prompt_path,
+        )
 
     @staticmethod
     def _load_prompt(path: str | None, default: str) -> str:
-        """Load a prompt template from file, falling back to the built-in default."""
         if path is None:
             return default
         p = Path(path)
         if p.exists():
-            logger.debug("Loaded prompt template from {}", path)
             return p.read_text(encoding="utf-8")
         logger.debug("Prompt file {} not found, using built-in default", path)
         return default
 
-    def _call_claude(self, prompt: str) -> str:
-        """Send a prompt to Claude via the anthropic API and return the response text."""
-        if self._client is None:
-            raise RuntimeError(
-                "anthropic SDK is not installed. "
-                "Install with: pip install anthropic"
-            )
-
-        message = self._client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-
-        # Extract text from the response content blocks
-        text_parts = []
-        for block in message.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-        return "\n".join(text_parts)
-
     @staticmethod
     def _parse_json_response(text: str) -> dict[str, Any]:
-        """Extract JSON from a response that may contain markdown code blocks."""
-        # Try to extract from markdown code block first
         match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
         if match:
             text = match.group(1).strip()
-
-        # Try parsing directly
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Last resort: find the first { ... } block
             match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
                 return json.loads(match.group(0))
             raise ValueError(f"Could not parse JSON from response: {text[:200]}")
 
     def translate(self, expression: str) -> str:
-        """Convert expression tree string to natural language."""
         prompt = self._translate_template.format(expression=expression)
         logger.info("Translating expression: {}", expression[:80])
-        result = self._call_claude(prompt)
-        logger.debug("Translation result: {}", result[:120])
-        return result.strip()
+        return self.client.complete(prompt, max_tokens=1024).strip()
 
-    def score(
-        self, expression: str, ic: float, matched_papers: list[dict]
-    ) -> JudgeResult:
-        """Score a candidate alpha for economic interpretability."""
-        # Check cache
+    def score(self, expression: str, ic: float, matched_papers: list[dict]) -> JudgeResult:
         if expression in self._cache:
-            logger.info("Cache hit for expression: {}", expression[:80])
+            logger.info("Cache hit: {}", expression[:80])
             return self._cache[expression]
 
-        # Step 1: Translate expression to NL
         nl_description = self.translate(expression)
 
-        # Step 2: Build paper context string
         if matched_papers:
             paper_lines = []
             for p in matched_papers:
@@ -169,8 +130,7 @@ class ApiJudge(AlphaJudge):
         else:
             paper_context = "No directly related papers found."
 
-        # Step 3: Format scoring prompt
-        rank_ic = ic * 0.85  # approximate rank IC if not provided
+        rank_ic = ic * 0.85
         prompt = self._score_template.format(
             nl_description=nl_description,
             expression=expression,
@@ -178,11 +138,9 @@ class ApiJudge(AlphaJudge):
             rank_ic=f"{rank_ic:.4f}",
             paper_context=paper_context,
         )
-
         logger.info("Scoring expression: {} (IC={:.4f})", expression[:80], ic)
-        raw_response = self._call_claude(prompt)
+        raw_response = self.client.complete(prompt, max_tokens=1024)
 
-        # Step 4: Parse the JSON response
         try:
             parsed = self._parse_json_response(raw_response)
             interpretability_score = float(parsed.get("score", 0.0))
@@ -194,22 +152,14 @@ class ApiJudge(AlphaJudge):
             narrative = "Failed to parse LLM response."
             reasoning = f"Parse error: {e}"
 
-        # Step 5: Build result
-        paper_titles = [p.get("title", "Unknown") for p in matched_papers]
         result = JudgeResult(
             expression=expression,
             nl_description=nl_description,
             interpretability_score=interpretability_score,
             economic_narrative=narrative,
-            matched_papers=paper_titles,
+            matched_papers=[p.get("title", "Unknown") for p in matched_papers],
             reasoning=reasoning,
         )
-
-        # Cache the result
         self._cache[expression] = result
-        logger.info(
-            "Scored expression: {} -> {:.2f}",
-            expression[:80],
-            interpretability_score,
-        )
+        logger.info("Scored: {} -> {:.2f}", expression[:80], interpretability_score)
         return result

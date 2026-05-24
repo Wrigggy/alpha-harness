@@ -1,6 +1,15 @@
 judge:
-  backend: "agent_sdk"  # "agent_sdk" or "api"
-  model: "claude-opus-4-6"
+  # backend: claude_code (Max plan, default) | openrouter (your API key) | anthropic (direct)
+  # OpenRouter needs: export OPENROUTER_API_KEY=sk-or-...
+  # Legacy slugs still accepted: agent_sdk -> claude_code, api -> anthropic
+  backend: "claude_code"
+
+  # If omitted, a sensible per-backend default is used:
+  #   claude_code -> claude-opus-4-7
+  #   openrouter  -> deepseek/deepseek-chat
+  #   anthropic   -> claude-opus-4-7
+  # model: "deepseek/deepseek-chat"
+
   score_threshold: 0.3
   batch_size: 10
   cache_results: true

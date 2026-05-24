@@ -33,6 +33,8 @@ from alphagen.config import OPERATORS  # noqa: E402
 from alphagen.data.expression import Expression  # noqa: E402
 from alphagen.data.parser import ExpressionParser, ExpressionParsingError  # noqa: E402
 
+from src.llm_client import get_llm_client  # noqa: E402
+
 
 LIBRARY_PATH = _ROOT / "data" / "factor_library.json"
 PROMPT_PICK_PATH = _ROOT / "prompts" / "idea_agent_pick.txt"
@@ -87,34 +89,14 @@ def _extract_json_array(text: str) -> list[dict[str, Any]]:
     return json.loads(blob[start:end])
 
 
-def _llm_call(prompt: str, model: str, seed: int) -> str:
-    import anyio
-    from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
-
-    async def _call() -> str:
-        full = f"{prompt}\n\n[generation_seed_hint={seed}]"
-        result = ""
-        async for message in query(
-            prompt=full,
-            options=ClaudeAgentOptions(model=model, allowed_tools=[], max_turns=1),
-        ):
-            if isinstance(message, ResultMessage):
-                result = message.result
-        if not result:
-            raise RuntimeError("Empty response from Claude")
-        return result
-
-    return anyio.run(_call)
-
-
 # ---------------------------------------------------------------------------
 # Pick mode (baseline — LLM returns ID lists)
 # ---------------------------------------------------------------------------
 
-def pick_factors(lib: list[dict], model: str, seed: int) -> list[dict[str, Any]]:
+def pick_factors(lib: list[dict], client, seed: int) -> list[dict[str, Any]]:
     template = PROMPT_PICK_PATH.read_text(encoding="utf-8")
     rendered = template.replace("{LIBRARY}", _render_library_block(lib))
-    raw = _llm_call(rendered, model=model, seed=seed)
+    raw = client.complete(rendered, seed=seed)
     items = _extract_json_array(raw)
     logger.info(f"LLM returned picks for {len(items)} hypotheses")
     return items
@@ -169,14 +151,14 @@ def expand_template(template: str, by_id: dict[str, dict]) -> tuple[str, list[st
     return expanded, used
 
 
-def compose_factors(lib: list[dict], regime: str, model: str, seed: int) -> list[dict[str, Any]]:
+def compose_factors(lib: list[dict], regime: str, client, seed: int) -> list[dict[str, Any]]:
     template = PROMPT_COMPOSE_PATH.read_text(encoding="utf-8")
     rendered = (
         template
         .replace("{LIBRARY}", _render_library_block(lib))
         .replace("{REGIME}", regime)
     )
-    raw = _llm_call(rendered, model=model, seed=seed)
+    raw = client.complete(rendered, seed=seed)
     items = _extract_json_array(raw)
     logger.info(f"LLM returned compositions for {len(items)} hypotheses")
     return items
@@ -269,12 +251,16 @@ def run(
     top_k: int,
     out_path: Path,
     data_source: str,
-    model: str,
+    model: str | None,
     data_config_path: str,
     min_abs_ic: float,
     mode: str,
+    llm_backend: str | None,
 ) -> None:
     np.random.seed(seed)
+
+    client = get_llm_client(backend=llm_backend, model=model)
+    logger.info(f"LLM client: backend={client.backend} model={client.model}")
 
     lib = _load_library()
     logger.info(f"Loaded {len(lib)} factors from library | mode={mode}")
@@ -290,7 +276,7 @@ def run(
     parser = _build_parser()
 
     if mode == "pick":
-        picks = pick_factors(lib, model=model, seed=seed)
+        picks = pick_factors(lib, client=client, seed=seed)
         resolved = resolve_picks(picks, lib)
         raw_payload: Any = picks
         regime: str | None = None
@@ -298,7 +284,7 @@ def run(
         from src.factor_mining._regime import compute_regime_summary
         regime = compute_regime_summary(train_calc)
         logger.info(f"Regime: {regime}")
-        items = compose_factors(lib, regime=regime, model=model, seed=seed)
+        items = compose_factors(lib, regime=regime, client=client, seed=seed)
         resolved = resolve_composed(items, lib)
         raw_payload = {"regime": regime, "items": items}
     else:
@@ -333,7 +319,8 @@ def run(
 
     payload = {
         "seed": seed,
-        "model": model,
+        "llm_backend": client.backend,
+        "model": client.model,
         "data_source": data_source,
         "mode": mode,
         "regime": regime,
@@ -378,7 +365,18 @@ if __name__ == "__main__":
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--data-source", choices=["crypto", "cn"], default="cn")
-    ap.add_argument("--model", default="claude-opus-4-7")
+    ap.add_argument(
+        "--llm-backend",
+        choices=["claude_code", "openrouter", "anthropic"],
+        default=None,
+        help="LLM backend. Falls back to $LLM_BACKEND, then 'claude_code'.",
+    )
+    ap.add_argument(
+        "--model",
+        default=None,
+        help="Model name; backend-specific default if omitted "
+             "(claude_code=claude-opus-4-7, openrouter=deepseek/deepseek-chat).",
+    )
     ap.add_argument("--data-config", default="config/data_config.yaml")
     ap.add_argument("--min-abs-ic", type=float, default=0.005)
     args = ap.parse_args()
@@ -391,4 +389,5 @@ if __name__ == "__main__":
         data_config_path=args.data_config,
         min_abs_ic=args.min_abs_ic,
         mode=args.mode,
+        llm_backend=args.llm_backend,
     )

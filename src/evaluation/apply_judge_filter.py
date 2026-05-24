@@ -36,7 +36,7 @@ from alphagen.data.parser import ExpressionParser  # noqa: E402
 from alphagen.models.linear_alpha_pool import MseAlphaPool  # noqa: E402
 
 from src.factor_mining._calc_factory import build_calculators  # noqa: E402
-from src.llm_judge.claude_agent_judge import ClaudeAgentJudge  # noqa: E402
+from src.llm_judge.judge import LLMJudge  # noqa: E402
 
 
 def _build_parser() -> ExpressionParser:
@@ -95,8 +95,14 @@ def apply_filter(
     # Score with judge
     judge_cfg = _load_judge_config(judge_config_path)
     prompts = judge_cfg.get("prompts", {})
-    judge = ClaudeAgentJudge(
-        model=judge_cfg.get("model", "claude-opus-4-7"),
+    backend = judge_cfg.get("backend")
+    if backend == "agent_sdk":  # legacy slug
+        backend = "claude_code"
+    elif backend == "api":
+        backend = "anthropic"
+    judge = LLMJudge.from_backend(
+        backend=backend,
+        model=judge_cfg.get("model"),
         score_prompt_path=prompts.get("scoring", "prompts/score.txt"),
         translate_prompt_path=prompts.get("translation", "prompts/translate.txt"),
     )

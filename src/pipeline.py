@@ -29,26 +29,37 @@ from src.backtest.long_short_backtest import long_short_backtest, plot_backtest
 
 
 def load_judge(config_path: str = "config/judge_config.yaml"):
-    """Load the LLM judge based on config."""
+    """Load the LLM judge based on config.
+
+    Backend (`judge.backend` in YAML) maps to llm_client backends:
+      claude_code | openrouter | anthropic.
+    Legacy aliases supported: agent_sdk -> claude_code, api -> anthropic.
+    """
+    from src.llm_judge.judge import LLMJudge
+
     cfg_path = Path(config_path)
     if cfg_path.exists():
         with open(cfg_path, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         judge_cfg = cfg.get("judge", {})
     else:
-        judge_cfg = {"backend": "agent_sdk", "model": "claude-opus-4-6"}
+        judge_cfg = {}
 
-    backend = judge_cfg.get("backend", "agent_sdk")
-    model = judge_cfg.get("model", "claude-opus-4-6")
-
+    backend = judge_cfg.get("backend")
+    # Legacy slug compatibility for older judge_config.yaml checkouts
     if backend == "agent_sdk":
-        from src.llm_judge.claude_agent_judge import ClaudeAgentJudge
-        return ClaudeAgentJudge(model=model)
+        backend = "claude_code"
     elif backend == "api":
-        from src.llm_judge.api_judge import ApiJudge
-        return ApiJudge(model=model)
-    else:
-        raise ValueError(f"Unknown judge backend: {backend}")
+        backend = "anthropic"
+
+    model = judge_cfg.get("model")
+    prompts = judge_cfg.get("prompts", {})
+    return LLMJudge.from_backend(
+        backend=backend,
+        model=model,
+        translate_prompt_path=prompts.get("translation", "prompts/translate.txt"),
+        score_prompt_path=prompts.get("scoring", "prompts/score.txt"),
+    )
 
 
 def run_pipeline(

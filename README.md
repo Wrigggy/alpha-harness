@@ -75,15 +75,23 @@ Library composition: GTJA-191 + WorldQuant Alpha101 + HTSY/SWS A-share factors +
 
 ### 3. LLM Idea-Agent — Warm-Start Seeds
 
-Two modes, controlled by `--mode`:
+Two modes, controlled by `--mode`. The LLM backend is independent and controlled by `--llm-backend` (see [LLM Backends](#llm-backends) below).
 
 ```bash
 # Compose mode (default) — LLM composes NEW expressions from library primitives,
-# conditioned on the current market regime
+# conditioned on the current market regime; backend defaults to claude_code (Max plan)
 python -m src.factor_mining.idea_agent \
     --mode compose --seed 42 --top-k 10 \
     --data-source cn \
     --out data/factors/warm_seeds_cn_compose_seed42.json
+
+# Same call, but route through OpenRouter (requires OPENROUTER_API_KEY)
+export OPENROUTER_API_KEY=sk-or-...
+python -m src.factor_mining.idea_agent \
+    --mode compose --seed 42 --top-k 10 \
+    --data-source cn \
+    --llm-backend openrouter --model deepseek/deepseek-chat \
+    --out data/factors/warm_seeds_cn_compose_deepseek_seed42.json
 
 # Pick mode (baseline) — LLM picks factor IDs from the library verbatim
 python -m src.factor_mining.idea_agent \
@@ -191,7 +199,8 @@ alpha-harness/
 │   │   ├── run_alphagen_cn.py    # AlphaGen PPO (CSI300)
 │   │   └── run_alphaqcm.py       # AlphaQCM (crypto OR CSI300)
 │   ├── knowledge_base/           # Paper corpus & retrieval
-│   ├── llm_judge/                # LLM-based alpha scoring
+│   ├── llm_client/               # Unified LLM dispatcher (claude_code / openrouter / anthropic)
+│   ├── llm_judge/                # Backend-agnostic LLM judge
 │   ├── evaluation/               # IC analysis + validation gates
 │   ├── portfolio/                # Factor combination strategies
 │   ├── backtest/                 # Long-short portfolio backtest
@@ -206,6 +215,29 @@ alpha-harness/
 └── notebooks/                    # Analysis notebooks
 ```
 
+## LLM Backends
+
+Both the idea-agent (warm-start) and the judge (post-filter) call out to an LLM through a single dispatcher at `src/llm_client/`. Three backends are wired up:
+
+| Backend | Auth | Default model | Notes |
+|---|---|---|---|
+| `claude_code` *(default)* | Max-plan subscription, **no API key** | `claude-opus-4-7` | Uses `claude_agent_sdk` |
+| `openrouter` | `OPENROUTER_API_KEY` | `deepseek/deepseek-chat` | OpenAI-compatible; lets you swap to GPT/Gemini/DeepSeek/etc. |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-opus-4-7` | Direct anthropic SDK |
+
+Selection precedence: **CLI flag** (`--llm-backend ...`) → **env var** (`LLM_BACKEND=...`) → **default** (`claude_code`).
+
+```bash
+# One-shot override for a single run
+python -m src.factor_mining.idea_agent ... --llm-backend openrouter
+
+# Or session-wide
+export LLM_BACKEND=openrouter
+export OPENROUTER_API_KEY=sk-or-...
+```
+
+For the judge, `config/judge_config.yaml` carries `backend:` and `model:` so the post-filter respects whichever provider you want without touching CLI flags. Legacy slugs `agent_sdk` and `api` are auto-mapped to `claude_code` and `anthropic` for back-compat with older checkouts.
+
 ## LLM Judge
 
 The judge operates as a **post-filter** (not in the search loop):
@@ -216,9 +248,7 @@ The judge operates as a **post-filter** (not in the search loop):
 
 Calibration: the judge accepts signals with *any* plausible mechanism and only rejects clearly nonsensical expressions. Novelty is not penalized.
 
-**Backend options** (configured in `config/judge_config.yaml`):
-- `agent_sdk` (default): Uses Claude via Max plan subscription — no API costs
-- `api`: Uses Anthropic API directly — for heavier batch workloads
+The judge is backend-agnostic — see [LLM Backends](#llm-backends) above.
 
 ## Hardware
 
@@ -248,7 +278,7 @@ C is built from B's pool with no extra training, which keeps the GPU budget at 4
 - **No Qlib dependency for crypto**: CryptoStockData produces the same tensor format AlphaGen expects
 - **Post-filter judge**: LLM scores after search, not during — keeps search fast, enables clean ablation
 - **Tag-based retrieval**: No vector DB — JSON corpus + tag matching is sufficient at research scale
-- **Max plan first**: Claude Agent SDK uses subscription credits, no per-token API costs
+- **Pluggable LLM backend**: all call sites go through `src/llm_client/`; `claude_code` (Max-plan, free) is the default, but the same code can route to `openrouter` (BYO-key, multi-model) or `anthropic` (direct API) without edits
 - **Compose-mode resolver**: LLM references library factors by ID (`m_008`) instead of repeating their full RPN. Cuts prompt tokens, lets the LLM stay focused on combination logic, and makes the audit trail (`used_library_ids`) explicit
 - **Sign-flip on negative IC**: warm seeds wrap negative-IC factors in `Mul(-1.0, ...)` so the RL pool's `force_load_exprs` never rejects them on sign alone
 - **In-tree parser for QCM**: the AlphaQCM fork ships expression.py but not parser.py, and `external/` is gitignored — so a parser targeting QCM Expression types lives at `src/factor_mining/_qcm_parser.py` instead of being patched into the fork
