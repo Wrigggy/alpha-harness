@@ -21,7 +21,7 @@ class OpenRouterClient:
 
     def __init__(
         self,
-        model: str = "deepseek/deepseek-chat",
+        model: str = "deepseek/deepseek-v4-pro",
         api_key: Optional[str] = None,
         timeout: float = 120.0,
         provider: Optional[str] = None,

@@ -84,10 +84,12 @@ def _unpack_ic(result):
 
 
 def _build_parser() -> ExpressionParser:
+    # time_deltas_need_suffix=False — accept Ref($close,10) as well as Ref($close,10d).
+    # LLM-emitted alphaagent seeds use bare integers; compose seeds use `Nd`.
     return ExpressionParser(
         operators=OPERATORS,
         ignore_case=False,
-        time_deltas_need_suffix=True,
+        time_deltas_need_suffix=False,
         non_positive_time_deltas_allowed=False,
         feature_need_dollar_sign=True,
     )

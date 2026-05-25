@@ -39,16 +39,19 @@ from src.llm_client import get_llm_client  # noqa: E402
 LIBRARY_PATH = _ROOT / "data" / "factor_library.json"
 PROMPT_PICK_PATH = _ROOT / "prompts" / "idea_agent_pick.txt"
 PROMPT_COMPOSE_PATH = _ROOT / "prompts" / "idea_agent_compose.txt"
+PROMPT_ALPHAAGENT_PATH = _ROOT / "prompts" / "idea_agent_alphaagent.txt"
 
 # Library IDs follow `<prefix>_<3 digits>` (e.g., m_008, cp_003)
 ID_TOKEN_RE = re.compile(r"\b([a-z]+_\d{3})\b")
 
 
 def _build_parser() -> ExpressionParser:
+    # time_deltas_need_suffix=False — accept bare integers (Ref($close,10))
+    # as well as suffixed (Ref($close,10d)). LLMs naturally emit the former.
     return ExpressionParser(
         operators=OPERATORS,
         ignore_case=False,
-        time_deltas_need_suffix=True,
+        time_deltas_need_suffix=False,
         non_positive_time_deltas_allowed=False,
         feature_need_dollar_sign=True,
     )
@@ -206,6 +209,150 @@ def resolve_composed(items: list[dict[str, Any]], lib: list[dict]) -> list[dict[
 
 
 # ---------------------------------------------------------------------------
+# AlphaAgent mode (free-form generation + structural novelty regularization)
+#
+# Faithful port of the algorithm in
+#   https://github.com/RndmVariableQ/AlphaAgent
+#   alphaagent/scenarios/qlib/regulator/factor_regulator.py
+# adapted to our alphagen.Expression hierarchy via src/factor_mining/_factor_ast.py
+# ---------------------------------------------------------------------------
+
+def _alphaagent_rejection_lines(rejected: list[dict]) -> str:
+    if not rejected:
+        return "(none yet — this is the first round)"
+    lines = []
+    for r in rejected[-10:]:  # cap context size
+        why = "; ".join(r.get("reject_reasons", [])) or r.get("why", "low |IC|")
+        snippet = (r.get("expr") or "")[:100]
+        matched = r.get("matched_zoo_expr")
+        if matched:
+            why += f" | matched zoo subtree from: {matched[:80]}"
+        lines.append(f"- expr={snippet!r}  reason: {why}")
+    return "\n".join(lines)
+
+
+def _alphaagent_accepted_lines(accepted: list[dict]) -> str:
+    if not accepted:
+        return "(none yet — generate fresh ideas)"
+    return "\n".join(f"- {a.get('hypothesis','?')}: {a['expr']}" for a in accepted)
+
+
+def alphaagent_factors(
+    zoo: list,
+    regime: str,
+    client,
+    seed: int,
+    train_calc,
+    parser: ExpressionParser,
+    target_k: int,
+    min_abs_ic: float,
+    n_rounds: int = 3,
+    n_per_round: int | None = None,
+    duplication_threshold: int = 8,
+) -> tuple[list[dict[str, Any]], list[dict]]:
+    """Iteratively generate free-form factors with AlphaAgent's regulator gate.
+
+    Returns (accepted_seeds, all_round_telemetry).
+    """
+    from src.factor_mining._factor_ast import evaluate_originality
+
+    n_per_round = n_per_round or max(target_k, 8)
+    template = PROMPT_ALPHAAGENT_PATH.read_text(encoding="utf-8")
+
+    accepted: list[dict[str, Any]] = []
+    rejected_history: list[dict] = []
+    telemetry: list[dict] = []
+
+    for round_idx in range(1, n_rounds + 1):
+        if len(accepted) >= target_k:
+            break
+        rendered = (
+            template
+            .replace("{N_PER_ROUND}", str(n_per_round))
+            .replace("{REGIME}", regime)
+            .replace("{ACCEPTED_SO_FAR}", _alphaagent_accepted_lines(accepted))
+            .replace("{REJECTION_FEEDBACK}", _alphaagent_rejection_lines(rejected_history))
+        )
+        logger.info(f"[alphaagent round {round_idx}/{n_rounds}] querying LLM "
+                    f"(target={target_k}, have={len(accepted)})")
+        raw = client.complete(rendered, seed=seed + round_idx, max_tokens=6000)
+        try:
+            items = _extract_json_array(raw)
+        except Exception as e:
+            logger.warning(f"round {round_idx}: failed to parse JSON: {e}")
+            telemetry.append({"round": round_idx, "parse_error": str(e), "raw_excerpt": raw[:300]})
+            continue
+        logger.info(f"round {round_idx}: LLM returned {len(items)} candidates")
+        round_summary = {"round": round_idx, "n_proposed": len(items),
+                          "n_parse_fail": 0, "n_low_ic": 0,
+                          "n_novelty_reject": 0, "n_accepted": 0}
+
+        for item in items:
+            expr_str = (item.get("expr") or "").strip()
+            if not expr_str:
+                round_summary["n_parse_fail"] += 1
+                continue
+            try:
+                e = parser.parse(expr_str)
+            except ExpressionParsingError as ex:
+                round_summary["n_parse_fail"] += 1
+                rejected_history.append({"expr": expr_str, "why": f"parse: {ex}"})
+                logger.debug(f"  parse fail: {expr_str[:120]}  ({ex})")
+                continue
+            try:
+                ic = float(train_calc.calc_single_IC_ret(e))
+            except Exception as ex:
+                round_summary["n_parse_fail"] += 1
+                rejected_history.append({"expr": expr_str, "why": f"ic compute: {ex}"})
+                continue
+            if not np.isfinite(ic) or abs(ic) < min_abs_ic:
+                round_summary["n_low_ic"] += 1
+                rejected_history.append({"expr": expr_str, "why": f"|IC|={ic:.4f} < {min_abs_ic}"})
+                continue
+            originality = evaluate_originality(e, zoo, duplication_threshold=duplication_threshold)
+            if not originality["accepted"]:
+                round_summary["n_novelty_reject"] += 1
+                rejected_history.append({
+                    "expr": expr_str,
+                    "reject_reasons": originality["reject_reasons"],
+                    "matched_zoo_expr": originality["matched_zoo_expr"],
+                })
+                continue
+            # Sign-flip negative IC so warm-loaded seeds all push the same direction
+            sign_flipped = False
+            if ic < 0:
+                flipped = f"Mul(-1.0,{expr_str})"
+                try:
+                    parser.parse(flipped)
+                    expr_str = flipped
+                    ic = -ic
+                    sign_flipped = True
+                except ExpressionParsingError:
+                    pass
+            accepted.append({
+                "id": f"alphaagent_{len(accepted):03d}",
+                "family": "alphaagent",
+                "expr": expr_str,
+                "hypothesis": item.get("hypothesis", ""),
+                "description": item.get("rationale", ""),
+                "source": "alphaagent",
+                "train_ic": ic,
+                "sign_flipped": sign_flipped,
+                "originality": {k: originality[k] for k in
+                                ("n_all_nodes", "n_free_args", "n_unique_vars",
+                                 "duplicated_subtree_size", "matched_zoo_expr",
+                                 "free_args_ratio", "unique_vars_ratio")},
+            })
+            round_summary["n_accepted"] += 1
+            if len(accepted) >= target_k:
+                break
+        telemetry.append(round_summary)
+        logger.info(f"round {round_idx} summary: {round_summary}; total accepted={len(accepted)}")
+
+    return accepted[:target_k], telemetry
+
+
+# ---------------------------------------------------------------------------
 # Shared scoring + emission pipeline
 # ---------------------------------------------------------------------------
 
@@ -294,27 +441,44 @@ def run(
         items = compose_factors(lib, regime=regime, client=client, seed=seed)
         resolved = resolve_composed(items, lib)
         raw_payload = {"regime": regime, "items": items}
+    elif mode == "alphaagent":
+        from src.factor_mining._regime import compute_regime_summary
+        regime = compute_regime_summary(train_calc)
+        logger.info(f"Regime: {regime}")
+        zoo = [parser.parse(f["expr"]) for f in lib]
+        scored, telemetry = alphaagent_factors(
+            zoo=zoo, regime=regime, client=client, seed=seed,
+            train_calc=train_calc, parser=parser,
+            target_k=top_k, min_abs_ic=min_abs_ic,
+        )
+        # scored already has train_ic + originality, skip the shared scorer
+        scored.sort(key=lambda x: x["train_ic"], reverse=True)
+        raw_payload = {"regime": regime, "rounds": telemetry}
+        logger.info(f"{len(scored)} alphaagent items accepted after {len(telemetry)} round(s)")
     else:
-        raise ValueError(f"Unknown mode {mode!r} (expected pick | compose)")
+        raise ValueError(f"Unknown mode {mode!r} (expected pick | compose | alphaagent)")
 
-    logger.info(f"Resolved to {len(resolved)} candidate {mode} items")
-    if not resolved:
-        raise RuntimeError(f"LLM returned no valid {mode} items")
-
-    scored = score_picks(resolved, train_calc, parser, min_abs_ic=min_abs_ic)
-    logger.info(f"{len(scored)} items passed |IC| ≥ {min_abs_ic}")
+    if mode != "alphaagent":
+        logger.info(f"Resolved to {len(resolved)} candidate {mode} items")
+        if not resolved:
+            raise RuntimeError(f"LLM returned no valid {mode} items")
+        scored = score_picks(resolved, train_calc, parser, min_abs_ic=min_abs_ic)
+        logger.info(f"{len(scored)} items passed |IC| ≥ {min_abs_ic}")
 
     selected = scored[:top_k]
     out_path.parent.mkdir(parents=True, exist_ok=True)
     seeds_out = []
     for s in selected:
+        hyps = s.get("hypotheses", [])
+        if not hyps and s.get("hypothesis"):
+            hyps = [s["hypothesis"]]
         rec = {
             "id": s["id"],
             "family": s["family"],
             "expr": s["expr"],
-            "description": s["description"],
+            "description": s.get("description", ""),
             "source": s["source"],
-            "hypotheses": s.get("hypotheses", []),
+            "hypotheses": hyps,
             "train_ic": s["train_ic"],
         }
         if "template" in s:
@@ -322,6 +486,8 @@ def run(
             rec["used_library_ids"] = s.get("used_library_ids", [])
         if s.get("sign_flipped"):
             rec["sign_flipped"] = True
+        if s.get("originality"):
+            rec["originality"] = s["originality"]
         seeds_out.append(rec)
 
     payload = {
@@ -332,7 +498,7 @@ def run(
         "mode": mode,
         "regime": regime,
         "n_library": len(lib),
-        "n_resolved": len(resolved),
+        "n_resolved": len(resolved) if mode != "alphaagent" else len(scored),
         "n_scored": len(scored),
         "n_selected": len(selected),
         "min_abs_ic": min_abs_ic,
@@ -366,8 +532,9 @@ def load_seed_expressions(path: Path) -> list[Expression]:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["pick", "compose"], default="compose",
-                    help="pick=LLM returns library IDs; compose=LLM emits new exprs (default)")
+    ap.add_argument("--mode", choices=["pick", "compose", "alphaagent"], default="compose",
+                    help="pick=LLM returns library IDs; compose=LLM emits new exprs via library scaffold; "
+                         "alphaagent=free-form generation with AST novelty regularization (KDD 2025 port)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--out", type=Path, required=True)

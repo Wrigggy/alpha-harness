@@ -8,7 +8,7 @@ judge:
   # not reachable on this account (e.g., no BYOK).
   # Legacy slugs still accepted: agent_sdk -> claude_code, api -> anthropic
   backend: "openrouter"
-  model: "deepseek/deepseek-chat"
+  model: "deepseek/deepseek-v4-pro"
   provider: "DeepSeek"
 
   # If omitted, a sensible per-backend default is used:

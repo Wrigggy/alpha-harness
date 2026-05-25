@@ -20,7 +20,7 @@ fi
 
 # All LLM calls go through OpenRouter, pinned to the official DeepSeek provider
 export LLM_BACKEND=${LLM_BACKEND:-openrouter}
-LLM_MODEL=${LLM_MODEL:-deepseek/deepseek-chat}
+LLM_MODEL=${LLM_MODEL:-deepseek/deepseek-v4-pro}
 export OPENROUTER_PROVIDER=${OPENROUTER_PROVIDER:-DeepSeek}
 
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then

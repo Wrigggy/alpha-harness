@@ -21,7 +21,7 @@ from .base import LLMClient
 
 _DEFAULT_MODELS = {
     "claude_code": "claude-opus-4-7",
-    "openrouter": "deepseek/deepseek-chat",
+    "openrouter": "deepseek/deepseek-v4-pro",
     "anthropic": "claude-opus-4-7",
 }
 

@@ -112,7 +112,11 @@ class LLMJudge(AlphaJudge):
     def translate(self, expression: str) -> str:
         prompt = self._translate_template.format(expression=expression)
         logger.info("Translating expression: {}", expression[:80])
-        return self.client.complete(prompt, max_tokens=1024).strip()
+        try:
+            return self.client.complete(prompt, max_tokens=8192).strip()
+        except Exception as e:
+            logger.warning("Translate call failed for {}: {}", expression[:60], e)
+            return f"(translation failed: {e})"
 
     def score(self, expression: str, ic: float, matched_papers: list[dict]) -> JudgeResult:
         if expression in self._cache:
@@ -140,7 +144,15 @@ class LLMJudge(AlphaJudge):
             paper_context=paper_context,
         )
         logger.info("Scoring expression: {} (IC={:.4f})", expression[:80], ic)
-        raw_response = self.client.complete(prompt, max_tokens=1024)
+        # v4-pro and similar reasoning models can use >8k internal reasoning
+        # tokens before emitting the JSON answer; cap generously and treat
+        # any backend error (empty response, network, etc.) as a 0-score so
+        # a single failure doesn't kill the whole batch.
+        try:
+            raw_response = self.client.complete(prompt, max_tokens=16384)
+        except Exception as e:
+            logger.warning("Score call failed for {}: {}", expression[:60], e)
+            raw_response = ""
 
         try:
             parsed = self._parse_json_response(raw_response)

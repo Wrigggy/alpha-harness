@@ -192,7 +192,12 @@ class ExpressionParser:
         if isinstance(value, DeltaTime):
             return value
         if isinstance(value, Constant):
-            value = value.value
+            # QCM fork stores it as `_value`, upstream as `value`.
+            const_val = getattr(value, "_value", getattr(value, "value", None))
+            if const_val is None:
+                maybe_raise(f"Cannot read Constant value from {value!r}")
+                return None
+            value = const_val
         if not float(value).is_integer():
             maybe_raise(f"A DeltaTime should be integral, but {value} is not")
             return None
